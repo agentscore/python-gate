@@ -31,13 +31,13 @@ class TestHeaders:
 class TestCacheKey:
     def test_lowercases_address(self):
         client = _make_client()
-        key = client._cache_key("0xABCDEF", "base")
-        assert "0xabcdef" in key
+        key = client._cache_key("0xABCDEF")
+        assert key == "0xabcdef"
 
-    def test_chain_address_format(self):
+    def test_address_only(self):
         client = _make_client()
-        key = client._cache_key("0xABC", "ethereum")
-        assert key == "ethereum:0xabc"
+        key = client._cache_key("0xABC")
+        assert key == "0xabc"
 
 
 class TestParseResponse:
@@ -72,14 +72,15 @@ class TestParseResponse:
 class TestBuildBody:
     def test_includes_policy_when_set(self):
         client = _make_client(min_score=50, min_grade="B")
-        body = client._build_body("0xabc", "base")
+        body = client._build_body("0xabc")
         assert body["address"] == "0xabc"
-        assert body["chain"] == "base"
+        assert "chain" not in body
         assert "policy" in body
         assert body["policy"]["min_score"] == 50
         assert body["policy"]["min_grade"] == "B"
 
     def test_no_policy_when_empty(self):
         client = _make_client()
-        body = client._build_body("0xabc", "base")
+        body = client._build_body("0xabc")
         assert "policy" not in body
+        assert "chain" not in body

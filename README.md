@@ -3,7 +3,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/agentscore-gate.svg)](https://pypi.org/project/agentscore-gate/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-ASGI middleware for trust-gating requests using [AgentScore](https://agentscore.sh). Verify AI agent wallet reputation before allowing requests through, built for the [x402](https://github.com/coinbase/x402) payment ecosystem and [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) agent registry. Works with FastAPI, Starlette, and any ASGI framework.
+ASGI middleware for trust-gating requests using [AgentScore](https://agentscore.sh). Verify AI agent wallet reputation before allowing requests through. Works with FastAPI, Starlette, and any ASGI framework.
 
 ## Install
 
@@ -20,7 +20,7 @@ from fastapi import FastAPI
 from agentscore_gate import AgentScoreGate
 
 app = FastAPI()
-app.add_middleware(AgentScoreGate, api_key="ask_...", min_score=50)
+app.add_middleware(AgentScoreGate, api_key="as_live_...", min_score=50)
 
 @app.get("/")
 async def root():
@@ -40,7 +40,7 @@ async def homepage(request):
     return PlainTextResponse("Hello, trusted agent!")
 
 app = Starlette(routes=[Route("/", homepage)])
-app.add_middleware(AgentScoreGate, api_key="ask_...", min_score=50)
+app.add_middleware(AgentScoreGate, api_key="as_live_...", min_score=50)
 ```
 
 ## Options
@@ -51,6 +51,7 @@ app.add_middleware(AgentScoreGate, api_key="ask_...", min_score=50)
 | `min_score` | `int \| None` | `None` | Minimum score (0–100) |
 | `min_grade` | `str \| None` | `None` | Minimum grade (A–F) |
 | `require_verified_activity` | `bool \| None` | `None` | Require verified payment activity |
+| `chain` | `str \| None` | `None` | Optional chain filter for scoring |
 | `fail_open` | `bool` | `False` | Allow requests when API is unreachable |
 | `cache_seconds` | `int` | `300` | Cache TTL for results |
 | `base_url` | `str` | `https://api.agentscore.sh` | API base URL |
@@ -68,8 +69,6 @@ app.add_middleware(AgentScoreGate, api_key="ask_...", min_score=50)
 ## Documentation
 
 - [API Reference](https://docs.agentscore.sh)
-- [ERC-8004 Standard](https://eips.ethereum.org/EIPS/eip-8004)
-- [x402 Protocol](https://github.com/coinbase/x402)
 
 ## License
 
