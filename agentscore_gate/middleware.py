@@ -25,10 +25,6 @@ def _default_extract_address(request: Request) -> str | None:
     return None
 
 
-def _default_extract_chain(_request: Request) -> str | None:
-    return None
-
-
 async def _default_on_denied(_request: Request, reason: DenialReason) -> JSONResponse:
     body: dict[str, Any] = {"error": reason.code}
     if reason.decision is not None:
@@ -61,8 +57,8 @@ class AgentScoreGate:
         fail_open: bool = False,
         cache_seconds: int = 300,
         base_url: str = "https://api.agentscore.sh",
+        chain: str | None = None,
         extract_address: Callable[[Request], str | None] | None = None,
-        extract_chain: Callable[[Request], str | None] | None = None,
         on_denied: Callable[[Request, DenialReason], Awaitable[JSONResponse]] | None = None,
     ) -> None:
         self.app = app
@@ -74,9 +70,9 @@ class AgentScoreGate:
             fail_open=fail_open,
             cache_seconds=cache_seconds,
             base_url=base_url,
+            chain=chain,
         )
         self._extract_address = extract_address or _default_extract_address
-        self._extract_chain = extract_chain or _default_extract_chain
         self._on_denied = on_denied or _default_on_denied
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -97,10 +93,8 @@ class AgentScoreGate:
             await response(scope, receive, send)
             return
 
-        chain = self._extract_chain(request) or "base"
-
         try:
-            result = await self._client.acheck(address, chain)
+            result = await self._client.acheck(address)
 
             if result.allow:
                 scope["state"] = {**scope.get("state", {}), "agentscore": result.raw}
