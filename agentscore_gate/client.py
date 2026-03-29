@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from agentscore_gate.cache import TTLCache
-from agentscore_gate.types import AssessResult, Grade
+from agentscore_gate.types import Activity, AssessResult, Classification, Grade, Identity, Reputation, ScoreDetail
 
 DEFAULT_BASE_URL = "https://api.agentscore.sh"
 DEFAULT_CACHE_SECONDS = 300
@@ -86,7 +86,93 @@ class GateClient:
         reasons: list[str] = data.get("decision_reasons", [])
         allow = decision == "allow" or decision is None
 
-        return AssessResult(allow=allow, decision=decision, reasons=reasons, raw=data)
+        score_data = data.get("score")
+        score = (
+            ScoreDetail(
+                value=score_data.get("value", 0),
+                grade=score_data.get("grade", "F"),
+                status=score_data.get("status", "pending"),
+                confidence=score_data.get("confidence", 0.0),
+                scored_at=score_data.get("scored_at"),
+                version=score_data.get("version"),
+                dimensions=score_data.get("dimensions", {}),
+            )
+            if isinstance(score_data, dict)
+            else None
+        )
+
+        act_data = data.get("activity")
+        activity = (
+            Activity(
+                total_verified_transactions=act_data.get("total_verified_transactions", 0),
+                total_candidate_transactions=act_data.get("total_candidate_transactions", 0),
+                counterparties_count=act_data.get("counterparties_count", 0),
+                active_days=act_data.get("active_days", 0),
+                active_months=act_data.get("active_months", 0),
+                as_verified_payer=act_data.get("as_verified_payer", 0),
+                as_verified_payee=act_data.get("as_verified_payee", 0),
+                as_candidate_payer=act_data.get("as_candidate_payer", 0),
+                as_candidate_payee=act_data.get("as_candidate_payee", 0),
+                first_verified_tx_at=act_data.get("first_verified_tx_at"),
+                last_verified_tx_at=act_data.get("last_verified_tx_at"),
+                first_candidate_tx_at=act_data.get("first_candidate_tx_at"),
+                last_candidate_tx_at=act_data.get("last_candidate_tx_at"),
+            )
+            if isinstance(act_data, dict)
+            else None
+        )
+
+        cls_data = data.get("classification")
+        classification = (
+            Classification(
+                entity_type=cls_data.get("entity_type"),
+                confidence=cls_data.get("confidence", 0.0),
+                is_known=cls_data.get("is_known", False),
+                is_known_erc8004_agent=cls_data.get("is_known_erc8004_agent", False),
+                has_verified_payment_activity=cls_data.get("has_verified_payment_activity", False),
+                has_candidate_payment_activity=cls_data.get("has_candidate_payment_activity", False),
+                reasons=cls_data.get("reasons", []),
+            )
+            if isinstance(cls_data, dict)
+            else None
+        )
+
+        id_data = data.get("identity")
+        identity = (
+            Identity(
+                ens_name=id_data.get("ens_name"),
+                github_url=id_data.get("github_url"),
+                website_url=id_data.get("website_url"),
+            )
+            if isinstance(id_data, dict)
+            else None
+        )
+
+        rep_data = data.get("reputation")
+        reputation = (
+            Reputation(
+                feedback_count=rep_data.get("feedback_count", 0),
+                client_count=rep_data.get("client_count", 0),
+                trust_avg=rep_data.get("trust_avg"),
+                uptime_avg=rep_data.get("uptime_avg"),
+                activity_avg=rep_data.get("activity_avg"),
+                last_feedback_at=rep_data.get("last_feedback_at"),
+            )
+            if isinstance(rep_data, dict)
+            else None
+        )
+
+        return AssessResult(
+            allow=allow,
+            decision=decision,
+            reasons=reasons,
+            score=score,
+            activity=activity,
+            classification=classification,
+            identity=identity,
+            reputation=reputation,
+            raw=data,
+        )
 
     def check(self, address: str) -> AssessResult:
         """Synchronous assess call with caching."""
