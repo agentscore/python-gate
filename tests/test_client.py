@@ -68,6 +68,130 @@ class TestParseResponse:
         assert result.decision == "deny"
         assert "low_score" in result.reasons
 
+    def test_parses_score(self):
+        """Score fields are parsed into a ScoreDetail dataclass."""
+        client = _make_client()
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.is_success = True
+        resp.json.return_value = {
+            "decision": "allow",
+            "decision_reasons": [],
+            "score": {
+                "value": 85,
+                "grade": "B",
+                "status": "scored",
+                "confidence": 0.9,
+                "scored_at": "2026-03-28T00:00:00Z",
+                "version": "v1",
+                "dimensions": {"longevity": 20, "activity": 30},
+            },
+        }
+
+        result = client._parse_response(resp)
+        assert result.score is not None
+        assert result.score.value == 85
+        assert result.score.grade == "B"
+        assert result.score.status == "scored"
+        assert result.score.confidence == 0.9
+        assert result.score.scored_at == "2026-03-28T00:00:00Z"
+        assert result.score.version == "v1"
+        assert result.score.dimensions["longevity"] == 20
+
+    def test_parses_activity(self):
+        """Activity fields are parsed into an Activity dataclass."""
+        client = _make_client()
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.is_success = True
+        resp.json.return_value = {
+            "decision": "allow",
+            "decision_reasons": [],
+            "activity": {
+                "total_verified_transactions": 10,
+                "total_candidate_transactions": 25,
+                "counterparties_count": 5,
+                "active_days": 30,
+                "active_months": 3,
+                "as_verified_payer": 4,
+                "as_verified_payee": 6,
+                "as_candidate_payer": 12,
+                "as_candidate_payee": 13,
+                "first_verified_tx_at": "2025-01-01T00:00:00Z",
+                "last_verified_tx_at": "2026-03-01T00:00:00Z",
+            },
+        }
+
+        result = client._parse_response(resp)
+        assert result.activity is not None
+        assert result.activity.total_verified_transactions == 10
+        assert result.activity.counterparties_count == 5
+        assert result.activity.active_days == 30
+        assert result.activity.as_verified_payer == 4
+        assert result.activity.first_verified_tx_at == "2025-01-01T00:00:00Z"
+
+    def test_parses_classification(self):
+        """Classification fields are parsed into a Classification dataclass."""
+        client = _make_client()
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.is_success = True
+        resp.json.return_value = {
+            "decision": "allow",
+            "decision_reasons": [],
+            "classification": {
+                "entity_type": "agent",
+                "confidence": 0.95,
+                "is_known": True,
+                "is_known_erc8004_agent": True,
+                "has_verified_payment_activity": True,
+                "has_candidate_payment_activity": True,
+                "reasons": ["registered_erc8004"],
+            },
+        }
+
+        result = client._parse_response(resp)
+        assert result.classification is not None
+        assert result.classification.entity_type == "agent"
+        assert result.classification.is_known_erc8004_agent is True
+        assert result.classification.has_verified_payment_activity is True
+        assert "registered_erc8004" in result.classification.reasons
+
+    def test_parses_identity(self):
+        """Identity fields are parsed into an Identity dataclass."""
+        client = _make_client()
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.is_success = True
+        resp.json.return_value = {
+            "decision": "allow",
+            "decision_reasons": [],
+            "identity": {
+                "ens_name": "agent.eth",
+                "github_url": "https://github.com/example",
+                "website_url": "https://example.com",
+            },
+        }
+
+        result = client._parse_response(resp)
+        assert result.identity is not None
+        assert result.identity.ens_name == "agent.eth"
+        assert result.identity.github_url == "https://github.com/example"
+
+    def test_missing_reputation_fields_are_none(self):
+        """When reputation fields are absent, typed fields are None."""
+        client = _make_client()
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.is_success = True
+        resp.json.return_value = {"decision": "allow", "decision_reasons": []}
+
+        result = client._parse_response(resp)
+        assert result.score is None
+        assert result.activity is None
+        assert result.classification is None
+        assert result.identity is None
+
 
 class TestBuildBody:
     def test_includes_policy_when_set(self):

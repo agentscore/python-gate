@@ -1,7 +1,7 @@
 """Trust-gating middleware for Python web frameworks using AgentScore."""
 
 from agentscore_gate.client import GateClient
-from agentscore_gate.types import AssessResult, DenialReason, Grade
+from agentscore_gate.types import Activity, AssessResult, Classification, DenialReason, Grade, Identity, ScoreDetail
 
 # ASGI middleware is the default import.
 # Flask and Django adapters are imported from their submodules:
@@ -14,9 +14,13 @@ except ImportError:
     AgentScoreGate = None  # type: ignore[assignment,misc]
 
 __all__ = [
+    "Activity",
     "AgentScoreGate",
     "AssessResult",
+    "Classification",
     "DenialReason",
     "GateClient",
     "Grade",
+    "Identity",
+    "ScoreDetail",
 ]
