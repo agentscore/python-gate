@@ -101,7 +101,10 @@ class GateClient:
             else None
         )
 
-        act_data = data.get("activity")
+        chains = data.get("chains", [])
+        first_chain = chains[0] if chains else {}
+
+        act_data = first_chain.get("activity") if isinstance(first_chain, dict) else None
         activity = (
             Activity(
                 total_verified_transactions=act_data.get("total_verified_transactions", 0),
@@ -122,7 +125,9 @@ class GateClient:
             else None
         )
 
-        cls_data = data.get("classification")
+        top_cls = data.get("classification") if isinstance(data.get("classification"), dict) else {}
+        chain_cls = first_chain.get("classification", {}) if isinstance(first_chain, dict) else {}
+        cls_data = {**chain_cls, **top_cls} if (top_cls or chain_cls) else None
         classification = (
             Classification(
                 entity_type=cls_data.get("entity_type"),
@@ -137,7 +142,7 @@ class GateClient:
             else None
         )
 
-        id_data = data.get("identity")
+        id_data = first_chain.get("identity") if isinstance(first_chain, dict) else None
         identity = (
             Identity(
                 ens_name=id_data.get("ens_name"),
