@@ -80,11 +80,9 @@ class TestParseResponse:
             "score": {
                 "value": 85,
                 "grade": "B",
-                "status": "scored",
-                "confidence": 0.9,
                 "scored_at": "2026-03-28T00:00:00Z",
+                "status": "scored",
                 "version": "v1",
-                "dimensions": {"longevity": 20, "activity": 30},
             },
         }
 
@@ -93,10 +91,8 @@ class TestParseResponse:
         assert result.score.value == 85
         assert result.score.grade == "B"
         assert result.score.status == "scored"
-        assert result.score.confidence == 0.9
         assert result.score.scored_at == "2026-03-28T00:00:00Z"
         assert result.score.version == "v1"
-        assert result.score.dimensions["longevity"] == 20
 
     def test_parses_activity(self):
         """Activity fields are parsed into an Activity dataclass."""
@@ -107,19 +103,24 @@ class TestParseResponse:
         resp.json.return_value = {
             "decision": "allow",
             "decision_reasons": [],
-            "activity": {
-                "total_verified_transactions": 10,
-                "total_candidate_transactions": 25,
-                "counterparties_count": 5,
-                "active_days": 30,
-                "active_months": 3,
-                "as_verified_payer": 4,
-                "as_verified_payee": 6,
-                "as_candidate_payer": 12,
-                "as_candidate_payee": 13,
-                "first_verified_tx_at": "2025-01-01T00:00:00Z",
-                "last_verified_tx_at": "2026-03-01T00:00:00Z",
-            },
+            "chains": [
+                {
+                    "chain": "base",
+                    "activity": {
+                        "total_verified_transactions": 10,
+                        "total_candidate_transactions": 25,
+                        "counterparties_count": 5,
+                        "active_days": 30,
+                        "active_months": 3,
+                        "as_verified_payer": 4,
+                        "as_verified_payee": 6,
+                        "as_candidate_payer": 12,
+                        "as_candidate_payee": 13,
+                        "first_verified_tx_at": "2025-01-01T00:00:00Z",
+                        "last_verified_tx_at": "2026-03-01T00:00:00Z",
+                    },
+                },
+            ],
         }
 
         result = client._parse_response(resp)
@@ -139,15 +140,20 @@ class TestParseResponse:
         resp.json.return_value = {
             "decision": "allow",
             "decision_reasons": [],
-            "classification": {
-                "entity_type": "agent",
-                "confidence": 0.95,
-                "is_known": True,
-                "is_known_erc8004_agent": True,
-                "has_verified_payment_activity": True,
-                "has_candidate_payment_activity": True,
-                "reasons": ["registered_erc8004"],
-            },
+            "chains": [
+                {
+                    "chain": "base",
+                    "classification": {
+                        "entity_type": "agent",
+                        "confidence": 0.95,
+                        "is_known": True,
+                        "is_known_erc8004_agent": True,
+                        "has_verified_payment_activity": True,
+                        "has_candidate_payment_activity": True,
+                        "reasons": ["registered_erc8004"],
+                    },
+                },
+            ],
         }
 
         result = client._parse_response(resp)
@@ -166,11 +172,16 @@ class TestParseResponse:
         resp.json.return_value = {
             "decision": "allow",
             "decision_reasons": [],
-            "identity": {
-                "ens_name": "agent.eth",
-                "github_url": "https://github.com/example",
-                "website_url": "https://example.com",
-            },
+            "chains": [
+                {
+                    "chain": "base",
+                    "identity": {
+                        "ens_name": "agent.eth",
+                        "github_url": "https://github.com/example",
+                        "website_url": "https://example.com",
+                    },
+                },
+            ],
         }
 
         result = client._parse_response(resp)
