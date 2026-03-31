@@ -64,10 +64,10 @@ def test_assess_policy_deny():
 
 def test_assess_operator_score():
     data = _assess()
-
-    if "operator_score" in data and data["operator_score"]:
-        op = data["operator_score"]
-        assert isinstance(op["score"], int)
-        assert isinstance(op["grade"], str)
-        assert isinstance(op["agent_count"], int)
-        assert isinstance(op["chains_active"], list)
+    op = data.get("operator_score")
+    if not op:
+        pytest.skip("no operator_score on test address")
+    assert isinstance(op["score"], int)
+    assert isinstance(op["grade"], str)
+    assert isinstance(op["agent_count"], int)
+    assert isinstance(op["chains_active"], list)
