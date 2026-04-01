@@ -125,6 +125,14 @@ class TestDjangoMiddleware:
             mw(request)
             mock_check.assert_called_once_with("0xabc", "ethereum")
 
+    def test_null_decision_allows_request(self) -> None:
+        mw = self._make_middleware()
+        request = self.factory.get("/", HTTP_X_WALLET_ADDRESS="0xabc")
+        result = AssessResult(allow=True, decision=None, reasons=[], raw={"score": 75})
+        with patch("agentscore_gate.django.GateClient.check", return_value=result):
+            resp = mw(request)
+            assert resp.status_code == 200
+
     def test_attaches_data_to_request(self) -> None:
         mw = self._make_middleware()
         request = self.factory.get("/", HTTP_X_WALLET_ADDRESS="0xabc")
