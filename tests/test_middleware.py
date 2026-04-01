@@ -220,6 +220,46 @@ def test_missing_api_key_raises():
 
 
 @pytest.mark.anyio
+async def test_websocket_scope_passes_through():
+    received = []
+
+    async def inner_app(scope, receive, send):
+        received.append(scope["type"])
+
+    app = AgentScoreGate(inner_app, api_key=API_KEY, min_score=50)
+    scope = {"type": "websocket", "headers": []}
+
+    async def noop_receive():
+        return {}
+
+    async def noop_send(msg):
+        pass
+
+    await app(scope, noop_receive, noop_send)
+    assert received == ["websocket"]
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_custom_extract_address():
+    def extract_from_query(request: Request) -> str | None:
+        return request.query_params.get("wallet")
+
+    app = _make_app(min_score=50, extract_address=extract_from_query)
+    respx.post(ASSESS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={"decision": "allow", "decision_reasons": []},
+        )
+    )
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
+        resp = await c.get("/?wallet=0xABC123")
+    assert resp.status_code == 200
+    assert resp.text.startswith("ok:")
+
+
+@pytest.mark.anyio
 @respx.mock
 async def test_address_lowercased_for_cache():
     """Cache key should normalize address to lowercase."""

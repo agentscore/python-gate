@@ -115,6 +115,26 @@ class TestFlaskGate:
             client.get("/", headers={"x-wallet-address": "0xabc"})
             mock_check.assert_called_once_with("0xabc", "ethereum")
 
+    def test_custom_extract_address_returning_none(self) -> None:
+        def always_none(_request):
+            return None
+
+        app = _make_app(extract_address=always_none)
+        client = app.test_client()
+        resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+        assert resp.status_code == 403
+        data = resp.get_json()
+        assert data["error"] == "missing_wallet_address"
+
+    def test_custom_on_denied_returning_wrong_type(self) -> None:
+        def bad_on_denied(_request, _reason):
+            return "not-a-tuple"
+
+        app = _make_app(on_denied=bad_on_denied)
+        client = app.test_client()
+        with pytest.raises(TypeError, match="on_denied must return a"):
+            client.get("/")
+
     def test_requires_api_key(self) -> None:
         with pytest.raises(ValueError, match="API key is required"):
             app = Flask(__name__)

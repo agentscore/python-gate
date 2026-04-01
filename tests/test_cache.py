@@ -95,6 +95,21 @@ def test_max_size_sweeps_expired_first(monkeypatch):
     assert cache.get("long-3") == "v"
 
 
+def test_overwrite_resets_ttl(monkeypatch):
+    real_monotonic = time.monotonic
+
+    cache: TTLCache[str] = TTLCache(default_ttl_seconds=2)
+    cache.set("key", "first")
+
+    base = real_monotonic()
+    monkeypatch.setattr(time, "monotonic", lambda: base + 1.5)
+
+    cache.set("key", "second")
+
+    monkeypatch.setattr(time, "monotonic", lambda: base + 3.0)
+    assert cache.get("key") == "second"
+
+
 def test_concurrent_access():
     """Concurrent reads and writes should not corrupt cache state."""
     cache: TTLCache[int] = TTLCache(default_ttl_seconds=60)

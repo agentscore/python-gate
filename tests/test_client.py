@@ -5,8 +5,10 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import httpx
+import pytest
+import respx
 
-from agentscore_gate.client import GateClient
+from agentscore_gate.client import GateClient, PaymentRequiredError
 
 
 def _make_client(**kwargs) -> GateClient:
@@ -219,3 +221,64 @@ class TestBuildBody:
         body = client._build_body("0xabc")
         assert "policy" not in body
         assert "chain" not in body
+
+
+class TestParseResponse402:
+    def test_raises_payment_required_error(self):
+        client = _make_client()
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 402
+        with pytest.raises(PaymentRequiredError):
+            client._parse_response(resp)
+
+
+ASSESS_URL = "https://api.agentscore.sh/v1/assess"
+
+
+class TestCheckCaching:
+    @respx.mock
+    def test_second_call_uses_cache(self):
+        client = _make_client()
+        route = respx.post(ASSESS_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={"decision": "allow", "decision_reasons": []},
+            )
+        )
+
+        client.check("0xABC")
+        client.check("0xABC")
+
+        assert route.call_count == 1
+
+
+class TestAcheckCaching:
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_second_call_uses_cache(self):
+        client = _make_client()
+        route = respx.post(ASSESS_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={"decision": "allow", "decision_reasons": []},
+            )
+        )
+
+        await client.acheck("0xABC")
+        await client.acheck("0xABC")
+
+        assert route.call_count == 1
+
+
+class TestCheckFailOpen:
+    def test_fail_open_stored_on_client(self):
+        client = _make_client(fail_open=True)
+        assert client.fail_open is True
+
+    @respx.mock
+    def test_check_raises_on_api_error(self):
+        client = _make_client(fail_open=True)
+        respx.post(ASSESS_URL).mock(return_value=httpx.Response(500))
+
+        with pytest.raises(RuntimeError, match="AgentScore API returned 500"):
+            client.check("0xABC")
