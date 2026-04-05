@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 Grade = Literal["A", "B", "C", "D", "F"]
 
-ScoreStatus = Literal["scored", "stale", "pending"]
+ScoreStatus = Literal["scored", "stale", "known_unscored"]
 
 DenialCode = Literal["wallet_not_trusted", "missing_wallet_address", "api_error", "payment_required"]
 
@@ -23,13 +23,13 @@ class DenialReason:
 class ScoreDetail:
     """Typed score breakdown from the assess response."""
 
-    value: int
+    value: float | None
     grade: Grade
     status: ScoreStatus
-    confidence: float
+    confidence: float | None = None
     scored_at: str | None = None
     version: str | None = None
-    dimensions: dict[str, Any] = field(default_factory=dict)
+    dimensions: dict[str, Any] | None = None
 
 
 @dataclass

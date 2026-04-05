@@ -57,10 +57,11 @@ class GateClient:
     def _cache_key(self, address: str) -> str:
         return address.lower()
 
-    def _build_body(self, address: str) -> dict[str, Any]:
+    def _build_body(self, address: str, chain: str | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {"address": address}
-        if self._chain:
-            body["chain"] = self._chain
+        effective_chain = chain or self._chain
+        if effective_chain:
+            body["chain"] = effective_chain
         if self._policy:
             body["policy"] = self._policy
         return body
@@ -92,10 +93,10 @@ class GateClient:
                 value=score_data.get("value", 0),
                 grade=score_data.get("grade", "F"),
                 status=score_data.get("status", "pending"),
-                confidence=score_data.get("confidence", 0.0),
+                confidence=score_data.get("confidence"),
                 scored_at=score_data.get("scored_at"),
                 version=score_data.get("version"),
-                dimensions=score_data.get("dimensions", {}),
+                dimensions=score_data.get("dimensions"),
             )
             if isinstance(score_data, dict)
             else None
@@ -179,7 +180,7 @@ class GateClient:
             raw=data,
         )
 
-    def check(self, address: str) -> AssessResult:
+    def check(self, address: str, chain: str | None = None) -> AssessResult:
         """Synchronous assess call with caching."""
         key = self._cache_key(address)
 
@@ -190,13 +191,13 @@ class GateClient:
         resp = self._sync_client.post(
             f"{self._base_url}/v1/assess",
             headers=self._headers(),
-            content=json.dumps(self._build_body(address)),
+            content=json.dumps(self._build_body(address, chain)),
         )
         result = self._parse_response(resp)
         self._cache.set(key, result)
         return result
 
-    async def acheck(self, address: str) -> AssessResult:
+    async def acheck(self, address: str, chain: str | None = None) -> AssessResult:
         """Asynchronous assess call with caching."""
         key = self._cache_key(address)
 
@@ -207,7 +208,7 @@ class GateClient:
         resp = await self._async_client.post(
             f"{self._base_url}/v1/assess",
             headers=self._headers(),
-            content=json.dumps(self._build_body(address)),
+            content=json.dumps(self._build_body(address, chain)),
         )
         result = self._parse_response(resp)
         self._cache.set(key, result)

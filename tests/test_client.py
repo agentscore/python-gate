@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock
 
 import httpx
@@ -95,6 +96,8 @@ class TestParseResponse:
         assert result.score.status == "scored"
         assert result.score.scored_at == "2026-03-28T00:00:00Z"
         assert result.score.version == "v1"
+        assert result.score.confidence is None
+        assert result.score.dimensions is None
 
     def test_parses_activity(self):
         """Activity fields are parsed into an Activity dataclass."""
@@ -233,6 +236,39 @@ class TestParseResponse402:
 
 
 ASSESS_URL = "https://api.agentscore.sh/v1/assess"
+
+
+class TestCheckWithChain:
+    @respx.mock
+    def test_check_sends_chain_override(self):
+        client = _make_client()
+        route = respx.post(ASSESS_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={"decision": "allow", "decision_reasons": []},
+            )
+        )
+
+        client.check("0xABC", chain="ethereum")
+
+        assert route.call_count == 1
+        body = json.loads(route.calls[0].request.content)
+        assert body["chain"] == "ethereum"
+
+    @respx.mock
+    def test_check_uses_client_chain_when_no_override(self):
+        client = _make_client(chain="base")
+        route = respx.post(ASSESS_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={"decision": "allow", "decision_reasons": []},
+            )
+        )
+
+        client.check("0xABC")
+
+        body = json.loads(route.calls[0].request.content)
+        assert body["chain"] == "base"
 
 
 class TestCheckCaching:
