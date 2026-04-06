@@ -111,7 +111,12 @@ class AgentScoreGate:
                 await self.app(scope, receive, send)
                 return
 
-            reason = DenialReason(code="wallet_not_trusted", decision=result.decision, reasons=result.reasons)
+            reason = DenialReason(
+                code="wallet_not_trusted",
+                decision=result.decision,
+                reasons=result.reasons,
+                verify_url=result.verify_url,
+            )
             response = await self._on_denied(request, reason)
             await response(scope, receive, send)
         except PaymentRequiredError:

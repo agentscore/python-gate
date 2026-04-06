@@ -17,6 +17,7 @@ class DenialReason:
     code: DenialCode
     decision: str | None = None
     reasons: list[str] = field(default_factory=list)
+    verify_url: str | None = None
 
 
 @dataclass

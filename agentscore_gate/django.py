@@ -91,7 +91,12 @@ class AgentScoreMiddleware:
                 request.agentscore = result.raw  # type: ignore[attr-defined]
                 return self.get_response(request)
 
-            reason = DenialReason(code="wallet_not_trusted", decision=result.decision, reasons=result.reasons)
+            reason = DenialReason(
+                code="wallet_not_trusted",
+                decision=result.decision,
+                reasons=result.reasons,
+                verify_url=result.verify_url,
+            )
             return self._on_denied(request, reason)
         except PaymentRequiredError:
             if self._client.fail_open:

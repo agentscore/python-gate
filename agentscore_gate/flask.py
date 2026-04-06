@@ -107,7 +107,12 @@ def agentscore_gate(
                 g.agentscore = result.raw
                 return None
 
-            reason = DenialReason(code="wallet_not_trusted", decision=result.decision, reasons=result.reasons)
+            reason = DenialReason(
+                code="wallet_not_trusted",
+                decision=result.decision,
+                reasons=result.reasons,
+                verify_url=result.verify_url,
+            )
             try:
                 body, status = _on_denied(flask_request, reason)
             except (TypeError, ValueError) as exc:
