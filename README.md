@@ -3,7 +3,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/agentscore-gate.svg)](https://pypi.org/project/agentscore-gate/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-ASGI middleware for trust-gating requests using [AgentScore](https://agentscore.sh). Verify AI agent wallet reputation before allowing requests through. Works with FastAPI, Starlette, and any ASGI framework.
+Trust-gating middleware for Python web frameworks using [AgentScore](https://agentscore.sh). Verify AI agent wallet reputation before allowing requests through. Works with FastAPI, Starlette, Flask, and Django.
 
 ## Install
 
@@ -41,6 +41,36 @@ async def homepage(request):
 
 app = Starlette(routes=[Route("/", homepage)])
 app.add_middleware(AgentScoreGate, api_key="as_live_...", min_score=50)
+```
+
+### Flask
+
+```python
+from flask import Flask
+from agentscore_gate.flask import agentscore_gate
+
+app = Flask(__name__)
+agentscore_gate(app, api_key="as_live_...", min_score=50)
+
+@app.route("/")
+def index():
+    return {"message": "Hello, trusted agent!"}
+```
+
+### Django
+
+Add to `settings.py`:
+
+```python
+MIDDLEWARE = [
+    "agentscore_gate.django.AgentScoreMiddleware",
+    # ...
+]
+
+AGENTSCORE_GATE = {
+    "api_key": "as_live_...",
+    "min_score": 50,
+}
 ```
 
 ## Options
