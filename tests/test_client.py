@@ -25,10 +25,10 @@ class TestHeaders:
         assert "User-Agent" in headers
         assert "agentscore" in headers["User-Agent"].lower()
 
-    def test_includes_authorization(self):
+    def test_includes_api_key_header(self):
         client = _make_client(api_key="ask_my_secret")
         headers = client._headers()
-        assert headers["Authorization"] == "Bearer ask_my_secret"
+        assert headers["X-API-Key"] == "ask_my_secret"
 
 
 class TestCacheKey:
@@ -318,3 +318,182 @@ class TestCheckFailOpen:
 
         with pytest.raises(RuntimeError, match="AgentScore API returned 500"):
             client.check("0xABC")
+
+
+class TestCompliancePolicyFields:
+    def test_build_body_includes_require_kyc(self):
+        client = _make_client(require_kyc=True)
+        body = client._build_body("0xabc")
+        assert body["policy"]["require_kyc"] is True
+
+    def test_build_body_includes_require_sanctions_clear(self):
+        client = _make_client(require_sanctions_clear=True)
+        body = client._build_body("0xabc")
+        assert body["policy"]["require_sanctions_clear"] is True
+
+    def test_build_body_includes_min_age(self):
+        client = _make_client(min_age=90)
+        body = client._build_body("0xabc")
+        assert body["policy"]["min_age"] == 90
+
+    def test_build_body_includes_blocked_jurisdictions(self):
+        client = _make_client(blocked_jurisdictions=["KP", "IR"])
+        body = client._build_body("0xabc")
+        assert body["policy"]["blocked_jurisdictions"] == ["KP", "IR"]
+
+    def test_build_body_includes_require_entity_type(self):
+        client = _make_client(require_entity_type="agent")
+        body = client._build_body("0xabc")
+        assert body["policy"]["require_entity_type"] == "agent"
+
+    def test_build_body_includes_all_compliance_fields(self):
+        client = _make_client(
+            min_grade="B",
+            min_score=70,
+            require_kyc=True,
+            require_sanctions_clear=True,
+            min_age=30,
+            blocked_jurisdictions=["KP"],
+            require_entity_type="agent",
+        )
+        body = client._build_body("0xabc")
+        assert body["policy"] == {
+            "min_grade": "B",
+            "min_score": 70,
+            "require_kyc": True,
+            "require_sanctions_clear": True,
+            "min_age": 30,
+            "blocked_jurisdictions": ["KP"],
+            "require_entity_type": "agent",
+        }
+
+
+class TestOperatorVerificationParsing:
+    def test_parses_operator_verification_from_response(self):
+        client = _make_client()
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.is_success = True
+        resp.json.return_value = {
+            "decision": "deny",
+            "decision_reasons": ["kyc_required"],
+            "operator_verification": {
+                "level": "kyc_verified",
+                "operator_type": "business",
+                "claimed_at": "2024-06-01T00:00:00Z",
+                "verified_at": "2024-06-15T00:00:00Z",
+            },
+        }
+
+        result = client._parse_response(resp)
+        assert result.operator_verification is not None
+        assert result.operator_verification.level == "kyc_verified"
+        assert result.operator_verification.operator_type == "business"
+        assert result.operator_verification.claimed_at == "2024-06-01T00:00:00Z"
+        assert result.operator_verification.verified_at == "2024-06-15T00:00:00Z"
+
+    def test_operator_verification_is_none_when_absent(self):
+        client = _make_client()
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.is_success = True
+        resp.json.return_value = {
+            "decision": "allow",
+            "decision_reasons": [],
+        }
+
+        result = client._parse_response(resp)
+        assert result.operator_verification is None
+
+
+class TestVerifyUrlParsing:
+    def test_parses_verify_url_from_response(self):
+        client = _make_client()
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.is_success = True
+        resp.json.return_value = {
+            "decision": "deny",
+            "decision_reasons": ["kyc_required"],
+            "verify_url": "https://agentscore.sh/verify/abc123",
+        }
+
+        result = client._parse_response(resp)
+        assert result.verify_url == "https://agentscore.sh/verify/abc123"
+
+    def test_verify_url_is_none_when_absent(self):
+        client = _make_client()
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.is_success = True
+        resp.json.return_value = {
+            "decision": "allow",
+            "decision_reasons": [],
+        }
+
+        result = client._parse_response(resp)
+        assert result.verify_url is None
+
+    def test_parses_resolved_operator_from_response(self):
+        client = _make_client()
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.is_success = True
+        resp.json.return_value = {
+            "decision": "deny",
+            "decision_reasons": ["kyc_required"],
+            "resolved_operator": "0xoperator456",
+        }
+
+        result = client._parse_response(resp)
+        assert result.resolved_operator == "0xoperator456"
+
+
+class TestComplianceDenyIntegration:
+    @respx.mock
+    def test_full_compliance_deny_flow(self):
+        """Integration test: full middleware flow with compliance deny."""
+        compliance_response = {
+            "decision": "deny",
+            "decision_reasons": ["kyc_required", "sanctions_check_pending"],
+            "score": {"value": 72, "grade": "C", "status": "scored"},
+            "operator_verification": {
+                "level": "none",
+                "operator_type": None,
+                "claimed_at": None,
+                "verified_at": None,
+            },
+            "verify_url": "https://agentscore.sh/verify/xyz789",
+            "resolved_operator": "0xoperator456",
+            "chains": [
+                {
+                    "chain": "base",
+                    "classification": {"entity_type": "wallet"},
+                    "activity": {},
+                    "identity": {},
+                }
+            ],
+        }
+
+        route = respx.post(ASSESS_URL).mock(
+            return_value=httpx.Response(200, json=compliance_response)
+        )
+
+        client = _make_client(
+            require_kyc=True,
+            require_sanctions_clear=True,
+        )
+        result = client.check("0xABC")
+
+        assert result.allow is False
+        assert result.decision == "deny"
+        assert "kyc_required" in result.reasons
+        assert "sanctions_check_pending" in result.reasons
+        assert result.verify_url == "https://agentscore.sh/verify/xyz789"
+        assert result.operator_verification is not None
+        assert result.operator_verification.level == "none"
+        assert result.resolved_operator == "0xoperator456"
+
+        body = json.loads(route.calls[0].request.content)
+        assert body["policy"]["require_kyc"] is True
+        assert body["policy"]["require_sanctions_clear"] is True

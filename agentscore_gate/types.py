@@ -86,6 +86,16 @@ class Reputation:
 
 
 @dataclass
+class OperatorVerification:
+    """Operator verification details from the assess response."""
+
+    level: str = "none"
+    operator_type: str | None = None
+    claimed_at: str | None = None
+    verified_at: str | None = None
+
+
+@dataclass
 class AssessResult:
     """Result from the AgentScore assess API."""
 
@@ -97,4 +107,7 @@ class AssessResult:
     classification: Classification | None = None
     identity: Identity | None = None
     reputation: Reputation | None = None
+    operator_verification: OperatorVerification | None = None
+    resolved_operator: str | None = None
+    verify_url: str | None = None
     raw: dict[str, Any] | None = None

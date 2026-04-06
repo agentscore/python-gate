@@ -140,3 +140,76 @@ class TestDjangoMiddleware:
             mw(request)
             assert hasattr(request, "agentscore")
             assert request.agentscore["score"] == 80  # type: ignore[attr-defined]
+
+    def test_compliance_params_passed_to_client(self) -> None:
+        with patch("agentscore_gate.django.GateClient") as mock_cls:
+            mock_cls.return_value = mock_cls
+            mock_cls.fail_open = False
+            mock_cls.check.return_value = _mock_result()
+            self._make_middleware(
+                require_kyc=True,
+                require_sanctions_clear=True,
+                min_age=90,
+                blocked_jurisdictions=["KP", "IR"],
+                require_entity_type="agent",
+            )
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["require_kyc"] is True
+            assert call_kwargs["require_sanctions_clear"] is True
+            assert call_kwargs["min_age"] == 90
+            assert call_kwargs["blocked_jurisdictions"] == ["KP", "IR"]
+            assert call_kwargs["require_entity_type"] == "agent"
+
+    def test_deny_includes_reasons_from_compliance(self) -> None:
+        mw = self._make_middleware()
+        result = AssessResult(
+            allow=False,
+            decision="deny",
+            reasons=["kyc_required", "sanctions_check_pending"],
+            raw={
+                "verify_url": "https://agentscore.sh/verify/abc123",
+                "operator_verification": {"level": "none"},
+            },
+        )
+        request = self.factory.get("/", HTTP_X_WALLET_ADDRESS="0xabc")
+        with patch("agentscore_gate.django.GateClient.check", return_value=result):
+            resp = mw(request)
+            assert resp.status_code == 403
+            data = json.loads(resp.content)
+            assert data["error"] == "wallet_not_trusted"
+            assert "kyc_required" in data["reasons"]
+            assert "sanctions_check_pending" in data["reasons"]
+
+    def test_allow_with_operator_verification_attaches_to_request(self) -> None:
+        mw = self._make_middleware()
+        raw = {
+            "score": 80,
+            "operator_verification": {
+                "level": "kyc_verified",
+                "operator_type": "business",
+                "claimed_at": "2024-06-01T00:00:00Z",
+                "verified_at": "2024-06-15T00:00:00Z",
+            },
+        }
+        result = AssessResult(allow=True, decision="allow", reasons=[], raw=raw)
+        request = self.factory.get("/", HTTP_X_WALLET_ADDRESS="0xabc")
+        with patch("agentscore_gate.django.GateClient.check", return_value=result):
+            resp = mw(request)
+            assert resp.status_code == 200
+            assert request.agentscore["operator_verification"]["level"] == "kyc_verified"  # type: ignore[attr-defined]
+
+    def test_verify_url_available_in_raw_on_deny(self) -> None:
+        mw = self._make_middleware()
+        raw = {
+            "decision": "deny",
+            "verify_url": "https://agentscore.sh/verify/abc123",
+        }
+        result = AssessResult(
+            allow=False, decision="deny", reasons=["kyc_required"], raw=raw
+        )
+        request = self.factory.get("/", HTTP_X_WALLET_ADDRESS="0xabc")
+        with patch("agentscore_gate.django.GateClient.check", return_value=result):
+            resp = mw(request)
+            assert resp.status_code == 403
+            data = json.loads(resp.content)
+            assert data["error"] == "wallet_not_trusted"

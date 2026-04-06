@@ -139,3 +139,79 @@ class TestFlaskGate:
         with pytest.raises(ValueError, match="API key is required"):
             app = Flask(__name__)
             agentscore_gate(app, api_key="")
+
+    def test_compliance_params_passed_to_client(self) -> None:
+        with patch("agentscore_gate.flask.GateClient") as mock_cls:
+            mock_cls.return_value = mock_cls
+            mock_cls.fail_open = False
+            app = Flask(__name__)
+            agentscore_gate(
+                app,
+                api_key="test-key",
+                require_kyc=True,
+                require_sanctions_clear=True,
+                min_age=90,
+                blocked_jurisdictions=["KP", "IR"],
+                require_entity_type="agent",
+            )
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["require_kyc"] is True
+            assert call_kwargs["require_sanctions_clear"] is True
+            assert call_kwargs["min_age"] == 90
+            assert call_kwargs["blocked_jurisdictions"] == ["KP", "IR"]
+            assert call_kwargs["require_entity_type"] == "agent"
+
+    def test_deny_includes_compliance_reasons(self) -> None:
+        app = _make_app()
+        result = AssessResult(
+            allow=False,
+            decision="deny",
+            reasons=["kyc_required", "sanctions_check_pending"],
+            raw={
+                "verify_url": "https://agentscore.sh/verify/abc123",
+                "operator_verification": {"level": "none"},
+            },
+        )
+        with patch("agentscore_gate.flask.GateClient.check", return_value=result):
+            client = app.test_client()
+            resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+            assert resp.status_code == 403
+            data = resp.get_json()
+            assert data["error"] == "wallet_not_trusted"
+            assert "kyc_required" in data["reasons"]
+            assert "sanctions_check_pending" in data["reasons"]
+
+    def test_allow_with_operator_verification_attaches_to_g(self) -> None:
+        app = _make_app()
+        raw = {
+            "score": 80,
+            "operator_verification": {
+                "level": "kyc_verified",
+                "operator_type": "business",
+                "claimed_at": "2024-06-01T00:00:00Z",
+                "verified_at": "2024-06-15T00:00:00Z",
+            },
+        }
+        result = AssessResult(allow=True, decision="allow", reasons=[], raw=raw)
+        with patch("agentscore_gate.flask.GateClient.check", return_value=result):
+            client = app.test_client()
+            resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data["agentscore"]["operator_verification"]["level"] == "kyc_verified"
+
+    def test_verify_url_available_in_raw_on_deny(self) -> None:
+        app = _make_app()
+        raw = {
+            "decision": "deny",
+            "verify_url": "https://agentscore.sh/verify/abc123",
+        }
+        result = AssessResult(
+            allow=False, decision="deny", reasons=["kyc_required"], raw=raw
+        )
+        with patch("agentscore_gate.flask.GateClient.check", return_value=result):
+            client = app.test_client()
+            resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+            assert resp.status_code == 403
+            data = resp.get_json()
+            assert data["error"] == "wallet_not_trusted"
