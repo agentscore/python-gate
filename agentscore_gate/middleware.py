@@ -31,6 +31,8 @@ async def _default_on_denied(_request: Request, reason: DenialReason) -> JSONRes
         body["decision"] = reason.decision
     if reason.reasons:
         body["reasons"] = reason.reasons
+    if reason.verify_url:
+        body["verify_url"] = reason.verify_url
     return JSONResponse(body, status_code=403)
 
 

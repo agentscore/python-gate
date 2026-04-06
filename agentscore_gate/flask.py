@@ -32,6 +32,8 @@ def _default_on_denied(_request: Request, reason: DenialReason) -> tuple[dict[st
         body["decision"] = reason.decision
     if reason.reasons:
         body["reasons"] = reason.reasons
+    if reason.verify_url:
+        body["verify_url"] = reason.verify_url
     return body, 403
 
 

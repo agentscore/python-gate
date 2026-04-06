@@ -71,6 +71,8 @@ class AgentScoreMiddleware:
             body["decision"] = reason.decision
         if reason.reasons:
             body["reasons"] = reason.reasons
+        if reason.verify_url:
+            body["verify_url"] = reason.verify_url
         return JsonResponse(body, status=403)
 
     def __call__(self, request: HttpRequest) -> Any:
