@@ -204,9 +204,7 @@ class TestDjangoMiddleware:
             "decision": "deny",
             "verify_url": "https://agentscore.sh/verify/abc123",
         }
-        result = AssessResult(
-            allow=False, decision="deny", reasons=["kyc_required"], raw=raw
-        )
+        result = AssessResult(allow=False, decision="deny", reasons=["kyc_required"], raw=raw)
         request = self.factory.get("/", HTTP_X_WALLET_ADDRESS="0xabc")
         with patch("agentscore_gate.django.GateClient.check", return_value=result):
             resp = mw(request)

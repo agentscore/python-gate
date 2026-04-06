@@ -206,9 +206,7 @@ class TestFlaskGate:
             "decision": "deny",
             "verify_url": "https://agentscore.sh/verify/abc123",
         }
-        result = AssessResult(
-            allow=False, decision="deny", reasons=["kyc_required"], raw=raw
-        )
+        result = AssessResult(allow=False, decision="deny", reasons=["kyc_required"], raw=raw)
         with patch("agentscore_gate.flask.GateClient.check", return_value=result):
             client = app.test_client()
             resp = client.get("/", headers={"x-wallet-address": "0xabc"})

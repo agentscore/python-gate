@@ -475,9 +475,7 @@ class TestComplianceDenyIntegration:
             ],
         }
 
-        route = respx.post(ASSESS_URL).mock(
-            return_value=httpx.Response(200, json=compliance_response)
-        )
+        route = respx.post(ASSESS_URL).mock(return_value=httpx.Response(200, json=compliance_response))
 
         client = _make_client(
             require_kyc=True,

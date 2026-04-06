@@ -291,9 +291,7 @@ async def test_compliance_deny_returns_verify_url():
         },
         "verify_url": "https://agentscore.sh/verify/abc123",
     }
-    respx.post(ASSESS_URL).mock(
-        return_value=httpx.Response(200, json=compliance_response)
-    )
+    respx.post(ASSESS_URL).mock(return_value=httpx.Response(200, json=compliance_response))
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
         resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
@@ -307,6 +305,7 @@ async def test_compliance_deny_returns_verify_url():
 @respx.mock
 async def test_compliance_deny_with_custom_on_denied_has_verify_url():
     """Custom on_denied handler receives verify_url through raw data."""
+
     async def custom_denied(request: Request, reason: DenialReason) -> JSONResponse:
         return JSONResponse({"blocked": True, "code": reason.code}, status_code=429)
 
@@ -316,9 +315,7 @@ async def test_compliance_deny_with_custom_on_denied_has_verify_url():
         "decision_reasons": ["kyc_required"],
         "verify_url": "https://agentscore.sh/verify/abc123",
     }
-    respx.post(ASSESS_URL).mock(
-        return_value=httpx.Response(200, json=compliance_response)
-    )
+    respx.post(ASSESS_URL).mock(return_value=httpx.Response(200, json=compliance_response))
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
         resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
@@ -341,9 +338,7 @@ async def test_compliance_allow_with_operator_verification_on_request_state():
             "verified_at": "2024-06-15T00:00:00Z",
         },
     }
-    respx.post(ASSESS_URL).mock(
-        return_value=httpx.Response(200, json=allow_response)
-    )
+    respx.post(ASSESS_URL).mock(return_value=httpx.Response(200, json=allow_response))
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
         resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
