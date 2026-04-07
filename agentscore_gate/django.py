@@ -39,6 +39,11 @@ class AgentScoreMiddleware:
             min_grade=config.get("min_grade"),
             min_score=config.get("min_score"),
             require_verified_activity=config.get("require_verified_activity"),
+            require_kyc=config.get("require_kyc"),
+            require_sanctions_clear=config.get("require_sanctions_clear"),
+            min_age=config.get("min_age"),
+            blocked_jurisdictions=config.get("blocked_jurisdictions"),
+            require_entity_type=config.get("require_entity_type"),
             fail_open=config.get("fail_open", False),
             cache_seconds=config.get("cache_seconds", 300),
             base_url=config.get("base_url", "https://api.agentscore.sh"),
@@ -66,6 +71,8 @@ class AgentScoreMiddleware:
             body["decision"] = reason.decision
         if reason.reasons:
             body["reasons"] = reason.reasons
+        if reason.verify_url:
+            body["verify_url"] = reason.verify_url
         return JsonResponse(body, status=403)
 
     def __call__(self, request: HttpRequest) -> Any:
@@ -86,7 +93,12 @@ class AgentScoreMiddleware:
                 request.agentscore = result.raw  # type: ignore[attr-defined]
                 return self.get_response(request)
 
-            reason = DenialReason(code="wallet_not_trusted", decision=result.decision, reasons=result.reasons)
+            reason = DenialReason(
+                code="wallet_not_trusted",
+                decision=result.decision,
+                reasons=result.reasons,
+                verify_url=result.verify_url,
+            )
             return self._on_denied(request, reason)
         except PaymentRequiredError:
             if self._client.fail_open:

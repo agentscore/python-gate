@@ -3,7 +3,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/agentscore-gate.svg)](https://pypi.org/project/agentscore-gate/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-ASGI middleware for trust-gating requests using [AgentScore](https://agentscore.sh). Verify AI agent wallet reputation before allowing requests through. Works with FastAPI, Starlette, and any ASGI framework.
+Trust-gating middleware for Python web frameworks using [AgentScore](https://agentscore.sh). Verify AI agent wallet reputation before allowing requests through. Works with FastAPI, Starlette, Flask, and Django.
 
 ## Install
 
@@ -43,6 +43,36 @@ app = Starlette(routes=[Route("/", homepage)])
 app.add_middleware(AgentScoreGate, api_key="as_live_...", min_score=50)
 ```
 
+### Flask
+
+```python
+from flask import Flask
+from agentscore_gate.flask import agentscore_gate
+
+app = Flask(__name__)
+agentscore_gate(app, api_key="as_live_...", min_score=50)
+
+@app.route("/")
+def index():
+    return {"message": "Hello, trusted agent!"}
+```
+
+### Django
+
+Add to `settings.py`:
+
+```python
+MIDDLEWARE = [
+    "agentscore_gate.django.AgentScoreMiddleware",
+    # ...
+]
+
+AGENTSCORE_GATE = {
+    "api_key": "as_live_...",
+    "min_score": 50,
+}
+```
+
 ## Options
 
 | Parameter | Type | Default | Description |
@@ -51,6 +81,11 @@ app.add_middleware(AgentScoreGate, api_key="as_live_...", min_score=50)
 | `min_score` | `int \| None` | `None` | Minimum score (0–100) |
 | `min_grade` | `str \| None` | `None` | Minimum grade (A–F) |
 | `require_verified_activity` | `bool \| None` | `None` | Require verified payment activity |
+| `require_kyc` | `bool \| None` | `None` | Require KYC verification |
+| `require_sanctions_clear` | `bool \| None` | `None` | Require clean sanctions status |
+| `min_age` | `int \| None` | `None` | Minimum age (18 or 21) |
+| `blocked_jurisdictions` | `list[str] \| None` | `None` | ISO country codes to block |
+| `require_entity_type` | `str \| None` | `None` | Required operator type (`individual` or `entity`) |
 | `chain` | `str \| None` | `None` | Optional chain filter for scoring |
 | `fail_open` | `bool` | `False` | Allow requests when API is unreachable |
 | `cache_seconds` | `int` | `300` | Cache TTL for results |
@@ -65,6 +100,21 @@ app.add_middleware(AgentScoreGate, api_key="as_live_...", min_score=50)
 3. Calls AgentScore `/v1/assess` with your policy
 4. Allows or blocks based on the decision
 5. Attaches data to `request.state.agentscore` on allowed requests
+
+## Compliance Gating
+
+```python
+app.add_middleware(
+    AgentScoreGate,
+    api_key="as_live_...",
+    min_grade="B",
+    require_kyc=True,
+    require_sanctions_clear=True,
+    min_age=18,
+    blocked_jurisdictions=["KP", "IR", "CU"],
+    require_entity_type="individual",
+)
+```
 
 ## Documentation
 

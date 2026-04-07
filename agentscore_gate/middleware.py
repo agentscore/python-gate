@@ -31,6 +31,8 @@ async def _default_on_denied(_request: Request, reason: DenialReason) -> JSONRes
         body["decision"] = reason.decision
     if reason.reasons:
         body["reasons"] = reason.reasons
+    if reason.verify_url:
+        body["verify_url"] = reason.verify_url
     return JSONResponse(body, status_code=403)
 
 
@@ -54,6 +56,11 @@ class AgentScoreGate:
         min_grade: Grade | None = None,
         min_score: int | None = None,
         require_verified_activity: bool | None = None,
+        require_kyc: bool | None = None,
+        require_sanctions_clear: bool | None = None,
+        min_age: int | None = None,
+        blocked_jurisdictions: list[str] | None = None,
+        require_entity_type: str | None = None,
         fail_open: bool = False,
         cache_seconds: int = 300,
         base_url: str = "https://api.agentscore.sh",
@@ -67,6 +74,11 @@ class AgentScoreGate:
             min_grade=min_grade,
             min_score=min_score,
             require_verified_activity=require_verified_activity,
+            require_kyc=require_kyc,
+            require_sanctions_clear=require_sanctions_clear,
+            min_age=min_age,
+            blocked_jurisdictions=blocked_jurisdictions,
+            require_entity_type=require_entity_type,
             fail_open=fail_open,
             cache_seconds=cache_seconds,
             base_url=base_url,
@@ -101,7 +113,12 @@ class AgentScoreGate:
                 await self.app(scope, receive, send)
                 return
 
-            reason = DenialReason(code="wallet_not_trusted", decision=result.decision, reasons=result.reasons)
+            reason = DenialReason(
+                code="wallet_not_trusted",
+                decision=result.decision,
+                reasons=result.reasons,
+                verify_url=result.verify_url,
+            )
             response = await self._on_denied(request, reason)
             await response(scope, receive, send)
         except PaymentRequiredError:

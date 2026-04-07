@@ -273,3 +273,91 @@ async def test_address_lowercased_for_cache():
         await c.get("/", headers={"x-wallet-address": "0xabc123"})
 
     assert route.call_count == 1
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_compliance_deny_returns_verify_url():
+    """Compliance deny response includes verify_url in the denial body."""
+    app = _make_app(min_score=50)
+    compliance_response = {
+        "decision": "deny",
+        "decision_reasons": ["kyc_required", "sanctions_check_pending"],
+        "operator_verification": {
+            "level": "none",
+            "operator_type": None,
+            "claimed_at": None,
+            "verified_at": None,
+        },
+        "verify_url": "https://agentscore.sh/verify/abc123",
+    }
+    respx.post(ASSESS_URL).mock(return_value=httpx.Response(200, json=compliance_response))
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
+        resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
+    assert resp.status_code == 403
+    body = resp.json()
+    assert body["error"] == "wallet_not_trusted"
+    assert "kyc_required" in body["reasons"]
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_compliance_deny_with_custom_on_denied_has_verify_url():
+    """Custom on_denied handler receives verify_url through raw data."""
+
+    async def custom_denied(request: Request, reason: DenialReason) -> JSONResponse:
+        return JSONResponse({"blocked": True, "code": reason.code}, status_code=429)
+
+    app = _make_app(min_score=50, on_denied=custom_denied)
+    compliance_response = {
+        "decision": "deny",
+        "decision_reasons": ["kyc_required"],
+        "verify_url": "https://agentscore.sh/verify/abc123",
+    }
+    respx.post(ASSESS_URL).mock(return_value=httpx.Response(200, json=compliance_response))
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
+        resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
+    assert resp.status_code == 429
+    assert resp.json()["blocked"] is True
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_compliance_allow_with_operator_verification_on_request_state():
+    """Allow response with operator_verification attaches it to request state."""
+    app = _make_app(min_score=50)
+    allow_response = {
+        "decision": "allow",
+        "decision_reasons": [],
+        "operator_verification": {
+            "level": "kyc_verified",
+            "operator_type": "business",
+            "claimed_at": "2024-06-01T00:00:00Z",
+            "verified_at": "2024-06-15T00:00:00Z",
+        },
+    }
+    respx.post(ASSESS_URL).mock(return_value=httpx.Response(200, json=allow_response))
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
+        resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
+    assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+@respx.mock
+async def test_compliance_policy_fields_sent_in_request():
+    """Verify compliance policy fields are sent in the request body."""
+    app = _make_app(min_score=50)
+
+    def check_body(request):
+        body_data = json.loads(request.content)
+        assert body_data["policy"]["min_score"] == 50
+        return httpx.Response(200, json={"decision": "allow", "decision_reasons": []})
+
+    respx.post(ASSESS_URL).mock(side_effect=check_body)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
+        resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
+    assert resp.status_code == 200

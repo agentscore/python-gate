@@ -16,6 +16,7 @@ Identity  # noqa: F821
 Reputation  # noqa: F821
 ScoreDetail  # noqa: F821
 ScoreStatus  # noqa: F821
+OperatorVerification  # noqa: F821
 
 # Dataclass fields — accessed by consumers, not internally
 grade  # noqa: F821
@@ -49,6 +50,12 @@ trust_avg  # noqa: F821
 uptime_avg  # noqa: F821
 activity_avg  # noqa: F821
 last_feedback_at  # noqa: F821
+level  # noqa: F821
+operator_type  # noqa: F821
+claimed_at  # noqa: F821
+verified_at  # noqa: F821
+resolved_operator  # noqa: F821
+verify_url  # noqa: F821
 
 # Django adapter — used by consumers via settings.py MIDDLEWARE
 AgentScoreMiddleware  # noqa: F821

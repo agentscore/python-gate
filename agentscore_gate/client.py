@@ -9,7 +9,16 @@ from typing import Any
 import httpx
 
 from agentscore_gate.cache import TTLCache
-from agentscore_gate.types import Activity, AssessResult, Classification, Grade, Identity, Reputation, ScoreDetail
+from agentscore_gate.types import (
+    Activity,
+    AssessResult,
+    Classification,
+    Grade,
+    Identity,
+    OperatorVerification,
+    Reputation,
+    ScoreDetail,
+)
 
 DEFAULT_BASE_URL = "https://api.agentscore.sh"
 DEFAULT_CACHE_SECONDS = 300
@@ -28,6 +37,11 @@ class GateClient:
         min_grade: Grade | None = None,
         min_score: int | None = None,
         require_verified_activity: bool | None = None,
+        require_kyc: bool | None = None,
+        require_sanctions_clear: bool | None = None,
+        min_age: int | None = None,
+        blocked_jurisdictions: list[str] | None = None,
+        require_entity_type: str | None = None,
         fail_open: bool = False,
         cache_seconds: int = DEFAULT_CACHE_SECONDS,
         base_url: str = DEFAULT_BASE_URL,
@@ -50,6 +64,16 @@ class GateClient:
             self._policy["min_score"] = min_score
         if require_verified_activity is not None:
             self._policy["require_verified_payment_activity"] = require_verified_activity
+        if require_kyc is not None:
+            self._policy["require_kyc"] = require_kyc
+        if require_sanctions_clear is not None:
+            self._policy["require_sanctions_clear"] = require_sanctions_clear
+        if min_age is not None:
+            self._policy["min_age"] = min_age
+        if blocked_jurisdictions is not None:
+            self._policy["blocked_jurisdictions"] = blocked_jurisdictions
+        if require_entity_type is not None:
+            self._policy["require_entity_type"] = require_entity_type
 
         self._async_client = httpx.AsyncClient(timeout=10.0)
         self._sync_client = httpx.Client(timeout=10.0)
@@ -57,17 +81,18 @@ class GateClient:
     def _cache_key(self, address: str) -> str:
         return address.lower()
 
-    def _build_body(self, address: str) -> dict[str, Any]:
+    def _build_body(self, address: str, chain: str | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {"address": address}
-        if self._chain:
-            body["chain"] = self._chain
+        effective_chain = chain or self._chain
+        if effective_chain:
+            body["chain"] = effective_chain
         if self._policy:
             body["policy"] = self._policy
         return body
 
     def _headers(self) -> dict[str, str]:
         return {
-            "Authorization": f"Bearer {self._api_key}",
+            "X-API-Key": self._api_key,
             "Content-Type": "application/json",
             "Accept": "application/json",
             "User-Agent": f"agentscore-gate-py/{_pkg_version('agentscore-gate')}",
@@ -92,10 +117,10 @@ class GateClient:
                 value=score_data.get("value", 0),
                 grade=score_data.get("grade", "F"),
                 status=score_data.get("status", "pending"),
-                confidence=score_data.get("confidence", 0.0),
+                confidence=score_data.get("confidence"),
                 scored_at=score_data.get("scored_at"),
                 version=score_data.get("version"),
-                dimensions=score_data.get("dimensions", {}),
+                dimensions=score_data.get("dimensions"),
             )
             if isinstance(score_data, dict)
             else None
@@ -167,6 +192,18 @@ class GateClient:
             else None
         )
 
+        ov_data = data.get("operator_verification")
+        operator_verification = (
+            OperatorVerification(
+                level=ov_data.get("level", "none"),
+                operator_type=ov_data.get("operator_type"),
+                claimed_at=ov_data.get("claimed_at"),
+                verified_at=ov_data.get("verified_at"),
+            )
+            if isinstance(ov_data, dict)
+            else None
+        )
+
         return AssessResult(
             allow=allow,
             decision=decision,
@@ -176,10 +213,13 @@ class GateClient:
             classification=classification,
             identity=identity,
             reputation=reputation,
+            operator_verification=operator_verification,
+            resolved_operator=data.get("resolved_operator"),
+            verify_url=data.get("verify_url"),
             raw=data,
         )
 
-    def check(self, address: str) -> AssessResult:
+    def check(self, address: str, chain: str | None = None) -> AssessResult:
         """Synchronous assess call with caching."""
         key = self._cache_key(address)
 
@@ -190,13 +230,13 @@ class GateClient:
         resp = self._sync_client.post(
             f"{self._base_url}/v1/assess",
             headers=self._headers(),
-            content=json.dumps(self._build_body(address)),
+            content=json.dumps(self._build_body(address, chain)),
         )
         result = self._parse_response(resp)
         self._cache.set(key, result)
         return result
 
-    async def acheck(self, address: str) -> AssessResult:
+    async def acheck(self, address: str, chain: str | None = None) -> AssessResult:
         """Asynchronous assess call with caching."""
         key = self._cache_key(address)
 
@@ -207,7 +247,7 @@ class GateClient:
         resp = await self._async_client.post(
             f"{self._base_url}/v1/assess",
             headers=self._headers(),
-            content=json.dumps(self._build_body(address)),
+            content=json.dumps(self._build_body(address, chain)),
         )
         result = self._parse_response(resp)
         self._cache.set(key, result)

@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 Grade = Literal["A", "B", "C", "D", "F"]
 
-ScoreStatus = Literal["scored", "stale", "pending"]
+ScoreStatus = Literal["scored", "stale", "known_unscored"]
 
 DenialCode = Literal["wallet_not_trusted", "missing_wallet_address", "api_error", "payment_required"]
 
@@ -17,19 +17,20 @@ class DenialReason:
     code: DenialCode
     decision: str | None = None
     reasons: list[str] = field(default_factory=list)
+    verify_url: str | None = None
 
 
 @dataclass
 class ScoreDetail:
     """Typed score breakdown from the assess response."""
 
-    value: int
+    value: float | None
     grade: Grade
     status: ScoreStatus
-    confidence: float
+    confidence: float | None = None
     scored_at: str | None = None
     version: str | None = None
-    dimensions: dict[str, Any] = field(default_factory=dict)
+    dimensions: dict[str, Any] | None = None
 
 
 @dataclass
@@ -86,6 +87,16 @@ class Reputation:
 
 
 @dataclass
+class OperatorVerification:
+    """Operator verification details from the assess response."""
+
+    level: str = "none"
+    operator_type: str | None = None
+    claimed_at: str | None = None
+    verified_at: str | None = None
+
+
+@dataclass
 class AssessResult:
     """Result from the AgentScore assess API."""
 
@@ -97,4 +108,7 @@ class AssessResult:
     classification: Classification | None = None
     identity: Identity | None = None
     reputation: Reputation | None = None
+    operator_verification: OperatorVerification | None = None
+    resolved_operator: str | None = None
+    verify_url: str | None = None
     raw: dict[str, Any] | None = None
