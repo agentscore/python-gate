@@ -2,24 +2,24 @@
 
 from __future__ import annotations
 
-import json
 import threading
-import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
 import respx
 from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import PlainTextResponse
 from starlette.routing import Route
+
+if TYPE_CHECKING:
+    from starlette.requests import Request
 
 from agentscore_gate import AgentScoreGate
 from agentscore_gate.client import GateClient, PaymentRequiredError
-from agentscore_gate.types import AssessResult, DenialReason
-
+from agentscore_gate.types import DenialReason
 
 # ---------------------------------------------------------------------------
 # Source-code reading sanity checks
@@ -79,9 +79,7 @@ def _make_app(
     cache_seconds=300,
 ):
     async def homepage(request: Request):
-        agentscore_data = (
-            request.state.agentscore if hasattr(request.state, "agentscore") else None
-        )
+        agentscore_data = request.state.agentscore if hasattr(request.state, "agentscore") else None
         return PlainTextResponse(f"ok:{agentscore_data}")
 
     app = Starlette(routes=[Route("/", homepage)])
@@ -175,9 +173,7 @@ async def test_middleware_503_fail_closed():
     app = _make_app(min_score=50)
     respx.post(ASSESS_URL).mock(return_value=httpx.Response(503))
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
-    ) as c:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
         resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
     assert resp.status_code == 403
     assert resp.json()["error"] == "api_error"
@@ -189,9 +185,7 @@ async def test_middleware_503_fail_open():
     app = _make_app(min_score=50, fail_open=True)
     respx.post(ASSESS_URL).mock(return_value=httpx.Response(503))
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
-    ) as c:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
         resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
     assert resp.status_code == 200
 
@@ -202,9 +196,7 @@ async def test_middleware_429_fail_closed():
     app = _make_app(min_score=50)
     respx.post(ASSESS_URL).mock(return_value=httpx.Response(429))
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
-    ) as c:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
         resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
     assert resp.status_code == 403
     assert resp.json()["error"] == "api_error"
@@ -218,10 +210,8 @@ async def test_middleware_429_fail_closed():
 class TestConcurrentRequests:
     @respx.mock
     def test_concurrent_sync_checks_are_thread_safe(self):
-        route = respx.post(ASSESS_URL).mock(
-            return_value=httpx.Response(
-                200, json={"decision": "allow", "decision_reasons": []}
-            )
+        respx.post(ASSESS_URL).mock(
+            return_value=httpx.Response(200, json={"decision": "allow", "decision_reasons": []})
         )
         client = _make_client()
         errors: list[Exception] = []
@@ -388,9 +378,7 @@ class TestStatusCodeEdgeCases:
 @pytest.mark.anyio
 async def test_empty_string_wallet_returns_403():
     app = _make_app(min_score=50)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
-    ) as c:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
         resp = await c.get("/", headers={"x-wallet-address": ""})
     assert resp.status_code == 403
     assert resp.json()["error"] == "missing_wallet_address"
@@ -406,13 +394,9 @@ async def test_middleware_caches_deny_with_verify_url():
         "decision_reasons": ["kyc_required"],
         "verify_url": "https://agentscore.sh/verify/cache_test",
     }
-    route = respx.post(ASSESS_URL).mock(
-        return_value=httpx.Response(200, json=compliance_response)
-    )
+    route = respx.post(ASSESS_URL).mock(return_value=httpx.Response(200, json=compliance_response))
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
-    ) as c:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
         resp1 = await c.get("/", headers={"x-wallet-address": "0xCACHED"})
         resp2 = await c.get("/", headers={"x-wallet-address": "0xCACHED"})
 
@@ -427,14 +411,10 @@ async def test_middleware_different_wallets_not_cached_together():
     """Different wallet addresses get separate cache entries."""
     app = _make_app(min_score=50)
     route = respx.post(ASSESS_URL).mock(
-        return_value=httpx.Response(
-            200, json={"decision": "allow", "decision_reasons": []}
-        )
+        return_value=httpx.Response(200, json={"decision": "allow", "decision_reasons": []})
     )
 
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
-    ) as c:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
         await c.get("/", headers={"x-wallet-address": "0xAAA"})
         await c.get("/", headers={"x-wallet-address": "0xBBB"})
 
