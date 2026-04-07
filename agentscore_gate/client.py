@@ -16,6 +16,8 @@ from agentscore_gate.types import (
     Grade,
     Identity,
     OperatorVerification,
+    PolicyCheck,
+    PolicyResult,
     Reputation,
     ScoreDetail,
 )
@@ -116,7 +118,7 @@ class GateClient:
             ScoreDetail(
                 value=score_data.get("value", 0),
                 grade=score_data.get("grade", "F"),
-                status=score_data.get("status", "pending"),
+                status=score_data.get("status", "known_unscored"),
                 confidence=score_data.get("confidence"),
                 scored_at=score_data.get("scored_at"),
                 version=score_data.get("version"),
@@ -204,6 +206,24 @@ class GateClient:
             else None
         )
 
+        pr_data = data.get("policy_result")
+        policy_result = (
+            PolicyResult(
+                all_passed=pr_data.get("all_passed", False),
+                checks=[
+                    PolicyCheck(
+                        rule=c.get("rule", ""),
+                        passed=c.get("passed", False),
+                        required=c.get("required"),
+                        actual=c.get("actual"),
+                    )
+                    for c in pr_data.get("checks", [])
+                ],
+            )
+            if isinstance(pr_data, dict)
+            else None
+        )
+
         return AssessResult(
             allow=allow,
             decision=decision,
@@ -216,6 +236,7 @@ class GateClient:
             operator_verification=operator_verification,
             resolved_operator=data.get("resolved_operator"),
             verify_url=data.get("verify_url"),
+            policy_result=policy_result,
             raw=data,
         )
 
