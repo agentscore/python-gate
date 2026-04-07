@@ -97,6 +97,24 @@ class OperatorVerification:
 
 
 @dataclass
+class PolicyCheck:
+    """A single policy check from the assess response."""
+
+    rule: str
+    passed: bool
+    required: Any = None
+    actual: Any = None
+
+
+@dataclass
+class PolicyResult:
+    """Policy evaluation result from the assess response."""
+
+    all_passed: bool
+    checks: list[PolicyCheck] = field(default_factory=list)
+
+
+@dataclass
 class AssessResult:
     """Result from the AgentScore assess API."""
 
@@ -111,4 +129,5 @@ class AssessResult:
     operator_verification: OperatorVerification | None = None
     resolved_operator: str | None = None
     verify_url: str | None = None
+    policy_result: PolicyResult | None = None
     raw: dict[str, Any] | None = None

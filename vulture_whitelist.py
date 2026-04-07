@@ -56,6 +56,14 @@ claimed_at  # noqa: F821
 verified_at  # noqa: F821
 resolved_operator  # noqa: F821
 verify_url  # noqa: F821
+rule  # noqa: F821
+passed  # noqa: F821
+required  # noqa: F821
+actual  # noqa: F821
+all_passed  # noqa: F821
+checks  # noqa: F821
+PolicyCheck  # noqa: F821
+PolicyResult  # noqa: F821
 
 # Django adapter — used by consumers via settings.py MIDDLEWARE
 AgentScoreMiddleware  # noqa: F821
