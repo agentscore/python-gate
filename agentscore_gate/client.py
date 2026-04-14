@@ -113,7 +113,6 @@ class GateClient:
             OperatorVerification(
                 level=ov_data.get("level", "none"),
                 operator_type=ov_data.get("operator_type"),
-                claimed_at=ov_data.get("claimed_at"),
                 verified_at=ov_data.get("verified_at"),
             )
             if isinstance(ov_data, dict)

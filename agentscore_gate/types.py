@@ -109,7 +109,6 @@ class OperatorVerification:
 
     level: str = "none"
     operator_type: str | None = None
-    claimed_at: str | None = None
     verified_at: str | None = None
 
 

@@ -238,7 +238,6 @@ class TestOperatorVerificationParsing:
             "operator_verification": {
                 "level": "kyc_verified",
                 "operator_type": "business",
-                "claimed_at": "2024-06-01T00:00:00Z",
                 "verified_at": "2024-06-15T00:00:00Z",
             },
         }
@@ -247,7 +246,6 @@ class TestOperatorVerificationParsing:
         assert result.operator_verification is not None
         assert result.operator_verification.level == "kyc_verified"
         assert result.operator_verification.operator_type == "business"
-        assert result.operator_verification.claimed_at == "2024-06-01T00:00:00Z"
         assert result.operator_verification.verified_at == "2024-06-15T00:00:00Z"
 
     def test_operator_verification_is_none_when_absent(self):
@@ -318,7 +316,6 @@ class TestComplianceDenyIntegration:
             "operator_verification": {
                 "level": "none",
                 "operator_type": None,
-                "claimed_at": None,
                 "verified_at": None,
             },
             "verify_url": "https://agentscore.sh/verify/xyz789",
