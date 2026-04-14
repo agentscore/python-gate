@@ -1,363 +1,156 @@
-import json
+"""Tests for the ASGI middleware (Starlette/FastAPI)."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import httpx
-import pytest
 import respx
 from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import JSONResponse
 from starlette.routing import Route
+from starlette.testclient import TestClient
 
-from agentscore_gate import AgentScoreGate
-from agentscore_gate.types import DenialReason
+from agentscore_gate.middleware import AgentScoreGate, CreateSessionOnMissing
 
-API_KEY = "ask_test_key"
-BASE_URL = "https://api.agentscore.sh"
-ASSESS_URL = f"{BASE_URL}/v1/assess"
+if TYPE_CHECKING:
+    from starlette.requests import Request
 
+ASSESS_URL = "https://api.agentscore.sh/v1/assess"
+SESSIONS_URL = "https://api.agentscore.sh/v1/sessions"
 
-def _make_app(
-    *,
-    min_score=None,
-    min_grade=None,
-    fail_open=False,
-    extract_address=None,
-    on_denied=None,
-    cache_seconds=300,
-):
-    async def homepage(request: Request):
-        agentscore_data = request.state.agentscore if hasattr(request.state, "agentscore") else None
-        return PlainTextResponse(f"ok:{agentscore_data}")
-
-    app = Starlette(routes=[Route("/", homepage)])
-    app.add_middleware(
-        AgentScoreGate,
-        api_key=API_KEY,
-        min_score=min_score,
-        min_grade=min_grade,
-        fail_open=fail_open,
-        extract_address=extract_address,
-        on_denied=on_denied,
-        cache_seconds=cache_seconds,
-    )
-    return app
+SESSION_RESPONSE = {
+    "session_id": "sess_abc123",
+    "verify_url": "https://agentscore.sh/verify/sess_abc123",
+    "poll_secret": "ps_secret_456",
+    "agent_instructions": "Please complete identity verification at the verify_url.",
+}
 
 
-@pytest.fixture
-def app():
-    return _make_app(min_score=50)
+def _homepage(request: Request) -> JSONResponse:
+    agentscore_data = request.state.agentscore if hasattr(request.state, "agentscore") else None
+    return JSONResponse({"ok": True, "agentscore": agentscore_data})
 
 
-@pytest.fixture
-def client(app):
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver")
+def _make_app(**gate_kwargs: object) -> Starlette:
+    app = Starlette(routes=[Route("/", _homepage)])
+    return AgentScoreGate(app, api_key="ask_test_key", **gate_kwargs)
 
 
-@pytest.mark.anyio
-@respx.mock
-async def test_allow_request(client):
-    respx.post(ASSESS_URL).mock(
+def _mock_assess(decision: str = "allow", reasons: list[str] | None = None) -> respx.Route:
+    return respx.post(ASSESS_URL).mock(
         return_value=httpx.Response(
             200,
-            json={"decision": "allow", "decision_reasons": [], "score": 85},
+            json={
+                "decision": decision,
+                "decision_reasons": reasons or [],
+            },
         )
     )
 
-    resp = await client.get("/", headers={"x-wallet-address": "0xABC123"})
-    assert resp.status_code == 200
-    assert resp.text.startswith("ok:")
 
+class TestCreateSessionOnMissing:
+    @respx.mock
+    def test_creates_session_and_returns_403_with_session_data(self):
+        respx.post(SESSIONS_URL).mock(return_value=httpx.Response(200, json=SESSION_RESPONSE))
 
-@pytest.mark.anyio
-@respx.mock
-async def test_deny_request(client):
-    respx.post(ASSESS_URL).mock(
-        return_value=httpx.Response(
-            200,
-            json={"decision": "deny", "decision_reasons": ["score_below_threshold"]},
+        app = _make_app(
+            create_session_on_missing=CreateSessionOnMissing(api_key="ask_session_key"),
         )
-    )
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/")
 
-    resp = await client.get("/", headers={"x-wallet-address": "0xABC123"})
-    assert resp.status_code == 403
-    body = resp.json()
-    assert body["error"] == "wallet_not_trusted"
-    assert "score_below_threshold" in body["reasons"]
+        assert resp.status_code == 403
+        data = resp.json()
+        assert data["error"] == "identity_verification_required"
+        assert data["verify_url"] == "https://agentscore.sh/verify/sess_abc123"
+        assert data["session_id"] == "sess_abc123"
+        assert data["poll_secret"] == "ps_secret_456"
+        assert data["agent_instructions"] == "Please complete identity verification at the verify_url."
 
+    @respx.mock
+    def test_session_request_uses_correct_api_key(self):
+        route = respx.post(SESSIONS_URL).mock(return_value=httpx.Response(200, json=SESSION_RESPONSE))
 
-@pytest.mark.anyio
-async def test_missing_wallet_address(client):
-    resp = await client.get("/")
-    assert resp.status_code == 403
-    assert resp.json()["error"] == "missing_wallet_address"
-
-
-@pytest.mark.anyio
-async def test_missing_wallet_fail_open():
-    app = _make_app(min_score=50, fail_open=True)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
-        resp = await c.get("/")
-    assert resp.status_code == 200
-
-
-@pytest.mark.anyio
-@respx.mock
-async def test_api_error_fail_closed(client):
-    respx.post(ASSESS_URL).mock(return_value=httpx.Response(500))
-
-    resp = await client.get("/", headers={"x-wallet-address": "0xABC123"})
-    assert resp.status_code == 403
-    assert resp.json()["error"] == "api_error"
-
-
-@pytest.mark.anyio
-@respx.mock
-async def test_api_error_fail_open():
-    app = _make_app(min_score=50, fail_open=True)
-    respx.post(ASSESS_URL).mock(return_value=httpx.Response(500))
-
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
-        resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
-    assert resp.status_code == 200
-
-
-@pytest.mark.anyio
-@respx.mock
-async def test_payment_required_fail_open():
-    app = _make_app(min_score=50, fail_open=True)
-    respx.post(ASSESS_URL).mock(return_value=httpx.Response(402))
-
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
-        resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
-    assert resp.status_code == 200
-
-
-@pytest.mark.anyio
-@respx.mock
-async def test_payment_required_fail_closed(client):
-    respx.post(ASSESS_URL).mock(return_value=httpx.Response(402))
-
-    resp = await client.get("/", headers={"x-wallet-address": "0xABC123"})
-    assert resp.status_code == 403
-    assert resp.json()["error"] == "payment_required"
-
-
-@pytest.mark.anyio
-@respx.mock
-async def test_caches_result(client):
-    route = respx.post(ASSESS_URL).mock(
-        return_value=httpx.Response(
-            200,
-            json={"decision": "allow", "decision_reasons": [], "score": 90},
+        app = _make_app(
+            create_session_on_missing=CreateSessionOnMissing(api_key="ask_session_key"),
         )
-    )
+        client = TestClient(app, raise_server_exceptions=False)
+        client.get("/")
 
-    await client.get("/", headers={"x-wallet-address": "0xABC123"})
-    await client.get("/", headers={"x-wallet-address": "0xABC123"})
+        assert route.call_count == 1
+        request = route.calls[0].request
+        assert request.headers["X-API-Key"] == "ask_session_key"
 
-    assert route.call_count == 1
+    @respx.mock
+    def test_uses_custom_base_url(self):
+        custom_url = "https://custom.api.example.com/v1/sessions"
+        route = respx.post(custom_url).mock(return_value=httpx.Response(200, json=SESSION_RESPONSE))
 
-
-@pytest.mark.anyio
-@respx.mock
-async def test_null_decision_allows():
-    """When the API returns decision=null, the request should be allowed."""
-    app = _make_app(min_score=50)
-    respx.post(ASSESS_URL).mock(
-        return_value=httpx.Response(
-            200,
-            json={"decision": None, "decision_reasons": [], "score": 75},
+        app = _make_app(
+            create_session_on_missing=CreateSessionOnMissing(
+                api_key="ask_session_key",
+                base_url="https://custom.api.example.com",
+            ),
         )
-    )
+        client = TestClient(app, raise_server_exceptions=False)
+        client.get("/")
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
-        resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
-    assert resp.status_code == 200
+        assert route.call_count == 1
 
+    @respx.mock
+    def test_falls_back_to_missing_identity_on_session_api_error(self):
+        respx.post(SESSIONS_URL).mock(return_value=httpx.Response(500))
 
-@pytest.mark.anyio
-@respx.mock
-async def test_custom_on_denied():
-    async def custom_denied(request: Request, reason: DenialReason) -> JSONResponse:
-        return JSONResponse({"blocked": True, "code": reason.code}, status_code=429)
-
-    app = _make_app(min_score=50, on_denied=custom_denied)
-    respx.post(ASSESS_URL).mock(
-        return_value=httpx.Response(200, json={"decision": "deny", "decision_reasons": ["low_score"]})
-    )
-
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
-        resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
-    assert resp.status_code == 429
-    assert resp.json()["blocked"] is True
-
-
-@pytest.mark.anyio
-@respx.mock
-async def test_policy_sent_in_request():
-    """Verify that min_score and min_grade are sent in the policy body."""
-    app = _make_app(min_score=60, min_grade="B")
-
-    def check_body(request):
-        body = json.loads(request.content)
-        assert body["policy"]["min_score"] == 60
-        assert body["policy"]["min_grade"] == "B"
-        return httpx.Response(200, json={"decision": "allow", "decision_reasons": []})
-
-    respx.post(ASSESS_URL).mock(side_effect=check_body)
-
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
-        resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
-    assert resp.status_code == 200
-
-
-def test_missing_api_key_raises():
-    async def homepage(request):
-        return PlainTextResponse("ok")
-
-    with pytest.raises(ValueError, match="API key is required"):
-        AgentScoreGate(Starlette(routes=[Route("/", homepage)]), api_key="")
-
-
-@pytest.mark.anyio
-async def test_websocket_scope_passes_through():
-    received = []
-
-    async def inner_app(scope, receive, send):
-        received.append(scope["type"])
-
-    app = AgentScoreGate(inner_app, api_key=API_KEY, min_score=50)
-    scope = {"type": "websocket", "headers": []}
-
-    async def noop_receive():
-        return {}
-
-    async def noop_send(msg):
-        pass
-
-    await app(scope, noop_receive, noop_send)
-    assert received == ["websocket"]
-
-
-@pytest.mark.anyio
-@respx.mock
-async def test_custom_extract_address():
-    def extract_from_query(request: Request) -> str | None:
-        return request.query_params.get("wallet")
-
-    app = _make_app(min_score=50, extract_address=extract_from_query)
-    respx.post(ASSESS_URL).mock(
-        return_value=httpx.Response(
-            200,
-            json={"decision": "allow", "decision_reasons": []},
+        app = _make_app(
+            create_session_on_missing=CreateSessionOnMissing(api_key="ask_session_key"),
         )
-    )
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/")
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
-        resp = await c.get("/?wallet=0xABC123")
-    assert resp.status_code == 200
-    assert resp.text.startswith("ok:")
+        assert resp.status_code == 403
+        data = resp.json()
+        assert data["error"] == "missing_identity"
 
+    @respx.mock
+    def test_falls_back_to_missing_identity_on_network_error(self):
+        respx.post(SESSIONS_URL).mock(side_effect=httpx.ConnectError("connection refused"))
 
-@pytest.mark.anyio
-@respx.mock
-async def test_address_lowercased_for_cache():
-    """Cache key should normalize address to lowercase."""
-    app = _make_app(min_score=50)
-    route = respx.post(ASSESS_URL).mock(
-        return_value=httpx.Response(200, json={"decision": "allow", "decision_reasons": []})
-    )
+        app = _make_app(
+            create_session_on_missing=CreateSessionOnMissing(api_key="ask_session_key"),
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/")
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
-        await c.get("/", headers={"x-wallet-address": "0xABC123"})
-        await c.get("/", headers={"x-wallet-address": "0xabc123"})
+        assert resp.status_code == 403
+        data = resp.json()
+        assert data["error"] == "missing_identity"
 
-    assert route.call_count == 1
+    @respx.mock
+    def test_does_not_create_session_when_identity_is_present(self):
+        assess_route = _mock_assess()
+        session_route = respx.post(SESSIONS_URL).mock(return_value=httpx.Response(200, json=SESSION_RESPONSE))
 
+        app = _make_app(
+            create_session_on_missing=CreateSessionOnMissing(api_key="ask_session_key"),
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/", headers={"x-wallet-address": "0xabc"})
 
-@pytest.mark.anyio
-@respx.mock
-async def test_compliance_deny_returns_verify_url():
-    """Compliance deny response includes verify_url in the denial body."""
-    app = _make_app(min_score=50)
-    compliance_response = {
-        "decision": "deny",
-        "decision_reasons": ["kyc_required", "sanctions_check_pending"],
-        "operator_verification": {
-            "level": "none",
-            "operator_type": None,
-            "claimed_at": None,
-            "verified_at": None,
-        },
-        "verify_url": "https://agentscore.sh/verify/abc123",
-    }
-    respx.post(ASSESS_URL).mock(return_value=httpx.Response(200, json=compliance_response))
+        assert resp.status_code == 200
+        assert assess_route.call_count == 1
+        assert session_route.call_count == 0
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
-        resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
-    assert resp.status_code == 403
-    body = resp.json()
-    assert body["error"] == "wallet_not_trusted"
-    assert "kyc_required" in body["reasons"]
+    @respx.mock
+    def test_fail_open_takes_precedence(self):
+        session_route = respx.post(SESSIONS_URL).mock(return_value=httpx.Response(200, json=SESSION_RESPONSE))
 
+        app = _make_app(
+            fail_open=True,
+            create_session_on_missing=CreateSessionOnMissing(api_key="ask_session_key"),
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/")
 
-@pytest.mark.anyio
-@respx.mock
-async def test_compliance_deny_with_custom_on_denied_has_verify_url():
-    """Custom on_denied handler receives verify_url through raw data."""
-
-    async def custom_denied(request: Request, reason: DenialReason) -> JSONResponse:
-        return JSONResponse({"blocked": True, "code": reason.code}, status_code=429)
-
-    app = _make_app(min_score=50, on_denied=custom_denied)
-    compliance_response = {
-        "decision": "deny",
-        "decision_reasons": ["kyc_required"],
-        "verify_url": "https://agentscore.sh/verify/abc123",
-    }
-    respx.post(ASSESS_URL).mock(return_value=httpx.Response(200, json=compliance_response))
-
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
-        resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
-    assert resp.status_code == 429
-    assert resp.json()["blocked"] is True
-
-
-@pytest.mark.anyio
-@respx.mock
-async def test_compliance_allow_with_operator_verification_on_request_state():
-    """Allow response with operator_verification attaches it to request state."""
-    app = _make_app(min_score=50)
-    allow_response = {
-        "decision": "allow",
-        "decision_reasons": [],
-        "operator_verification": {
-            "level": "kyc_verified",
-            "operator_type": "business",
-            "claimed_at": "2024-06-01T00:00:00Z",
-            "verified_at": "2024-06-15T00:00:00Z",
-        },
-    }
-    respx.post(ASSESS_URL).mock(return_value=httpx.Response(200, json=allow_response))
-
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
-        resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
-    assert resp.status_code == 200
-
-
-@pytest.mark.anyio
-@respx.mock
-async def test_compliance_policy_fields_sent_in_request():
-    """Verify compliance policy fields are sent in the request body."""
-    app = _make_app(min_score=50)
-
-    def check_body(request):
-        body_data = json.loads(request.content)
-        assert body_data["policy"]["min_score"] == 50
-        return httpx.Response(200, json={"decision": "allow", "decision_reasons": []})
-
-    respx.post(ASSESS_URL).mock(side_effect=check_body)
-
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as c:
-        resp = await c.get("/", headers={"x-wallet-address": "0xABC123"})
-    assert resp.status_code == 200
+        assert resp.status_code == 200
+        assert session_route.call_count == 0

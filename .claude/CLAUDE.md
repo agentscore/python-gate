@@ -2,6 +2,17 @@
 
 Trust-gating middleware for Python web frameworks using AgentScore. Includes adapters for Flask, Django, and Starlette/FastAPI.
 
+## Identity Model
+
+All adapters (ASGI, Flask, Django) support two identity types via `extract_identity` (backwards compatible with `extract_address`):
+
+- **Wallet address** — `X-Wallet-Address` header (existing)
+- **Operator token** — `X-Operator-Token` header (new)
+
+Default checks `X-Operator-Token` first, then `X-Wallet-Address`. New types: `AgentIdentity`, `CreateSessionOnMissing` dataclass. New client methods: `check_identity()`, `acheck_identity()`.
+
+`create_session_on_missing` option (ASGI): when set and no identity found, creates a verification session and returns 403 with verify_url + poll instructions.
+
 ## Architecture
 
 Single-package Python library published to PyPI.

@@ -3,6 +3,7 @@
 from agentscore_gate.client import GateClient
 from agentscore_gate.types import (
     Activity,
+    AgentIdentity,
     AssessResult,
     Classification,
     DenialReason,
@@ -17,16 +18,19 @@ from agentscore_gate.types import (
 #   from agentscore_gate.flask import agentscore_gate
 #   from agentscore_gate.django import AgentScoreMiddleware
 try:
-    from agentscore_gate.middleware import AgentScoreGate
+    from agentscore_gate.middleware import AgentScoreGate, CreateSessionOnMissing
 except ImportError:
     # starlette not installed
     AgentScoreGate = None  # type: ignore[assignment,misc]
+    CreateSessionOnMissing = None  # type: ignore[assignment,misc]
 
 __all__ = [
     "Activity",
+    "AgentIdentity",
     "AgentScoreGate",
     "AssessResult",
     "Classification",
+    "CreateSessionOnMissing",
     "DenialReason",
     "GateClient",
     "Grade",

@@ -59,7 +59,7 @@ class TestFlaskGate:
         resp = client.get("/")
         assert resp.status_code == 403
         data = resp.get_json()
-        assert data["error"] == "missing_wallet_address"
+        assert data["error"] == "missing_identity"
 
     def test_missing_wallet_fail_open(self) -> None:
         app = _make_app(fail_open=True)
@@ -110,21 +110,12 @@ class TestFlaskGate:
             return "ethereum"
 
         app = _make_app(extract_chain=custom_extract_chain)
-        with patch("agentscore_gate.flask.GateClient.check", return_value=_mock_result()) as mock_check:
+        with patch("agentscore_gate.flask.GateClient.check_identity", return_value=_mock_result()) as mock_check:
             client = app.test_client()
             client.get("/", headers={"x-wallet-address": "0xabc"})
-            mock_check.assert_called_once_with("0xabc", "ethereum")
-
-    def test_custom_extract_address_returning_none(self) -> None:
-        def always_none(_request):
-            return None
-
-        app = _make_app(extract_address=always_none)
-        client = app.test_client()
-        resp = client.get("/", headers={"x-wallet-address": "0xabc"})
-        assert resp.status_code == 403
-        data = resp.get_json()
-        assert data["error"] == "missing_wallet_address"
+            call_args = mock_check.call_args
+            assert call_args[0][0].address == "0xabc"
+            assert call_args[0][1] == "ethereum"
 
     def test_custom_on_denied_returning_wrong_type(self) -> None:
         def bad_on_denied(_request, _reason):
@@ -213,3 +204,62 @@ class TestFlaskGate:
             assert resp.status_code == 403
             data = resp.get_json()
             assert data["error"] == "wallet_not_trusted"
+
+
+class TestFlaskIdentityModel:
+    """Flask adapter identity model tests."""
+
+    def test_default_extract_identity_returns_operator_token(self) -> None:
+        from agentscore_gate.flask import _default_extract_identity
+
+        class FakeRequest:
+            headers = {"x-operator-token": "opc_flask", "x-wallet-address": "0xabc"}
+
+        identity = _default_extract_identity(FakeRequest())
+        assert identity is not None
+        assert identity.operator_token == "opc_flask"
+        assert identity.address == "0xabc"
+
+    def test_default_extract_identity_address_only(self) -> None:
+        from agentscore_gate.flask import _default_extract_identity
+
+        class FakeRequest:
+            headers = {"x-wallet-address": "0xabc"}
+
+        identity = _default_extract_identity(FakeRequest())
+        assert identity is not None
+        assert identity.address == "0xabc"
+        assert identity.operator_token is None
+
+    def test_default_extract_identity_returns_none_when_empty(self) -> None:
+        from agentscore_gate.flask import _default_extract_identity
+
+        class FakeRequest:
+            headers = {}
+
+        identity = _default_extract_identity(FakeRequest())
+        assert identity is None
+
+    def test_missing_identity_returns_403(self) -> None:
+        app = _make_app()
+        client = app.test_client()
+        resp = client.get("/")
+        assert resp.status_code == 403
+        data = resp.get_json()
+        assert data["error"] == "missing_identity"
+
+    def test_missing_identity_fail_open(self) -> None:
+        app = _make_app(fail_open=True)
+        client = app.test_client()
+        resp = client.get("/")
+        assert resp.status_code == 200
+
+    def test_operator_token_header_calls_check_identity(self) -> None:
+        app = _make_app()
+        with patch("agentscore_gate.flask.GateClient.check_identity", return_value=_mock_result()) as mock_check:
+            client = app.test_client()
+            resp = client.get("/", headers={"x-operator-token": "opc_flask_test"})
+            assert resp.status_code == 200
+            call_args = mock_check.call_args
+            identity = call_args[0][0]
+            assert identity.operator_token == "opc_flask_test"

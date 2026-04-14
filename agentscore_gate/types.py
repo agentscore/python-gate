@@ -7,7 +7,21 @@ Grade = Literal["A", "B", "C", "D", "F"]
 
 ScoreStatus = Literal["scored", "stale", "known_unscored"]
 
-DenialCode = Literal["wallet_not_trusted", "missing_wallet_address", "api_error", "payment_required"]
+DenialCode = Literal[
+    "wallet_not_trusted",
+    "missing_identity",
+    "api_error",
+    "payment_required",
+    "identity_verification_required",
+]
+
+
+@dataclass
+class AgentIdentity:
+    """Identity of an agent — wallet address and/or operator token."""
+
+    address: str | None = None
+    operator_token: str | None = None
 
 
 @dataclass
@@ -18,6 +32,9 @@ class DenialReason:
     decision: str | None = None
     reasons: list[str] = field(default_factory=list)
     verify_url: str | None = None
+    session_id: str | None = None
+    poll_secret: str | None = None
+    agent_instructions: str | None = None
 
 
 @dataclass
@@ -121,11 +138,7 @@ class AssessResult:
     allow: bool
     decision: str | None = None
     reasons: list[str] = field(default_factory=list)
-    score: ScoreDetail | None = None
-    activity: Activity | None = None
-    classification: Classification | None = None
-    identity: Identity | None = None
-    reputation: Reputation | None = None
+    identity_method: str | None = None
     operator_verification: OperatorVerification | None = None
     resolved_operator: str | None = None
     verify_url: str | None = None
