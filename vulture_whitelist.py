@@ -55,6 +55,8 @@ operator_type  # noqa: F821
 verified_at  # noqa: F821
 resolved_operator  # noqa: F821
 verify_url  # noqa: F821
+identity_method  # noqa: F821
+policy_result  # noqa: F821
 rule  # noqa: F821
 passed  # noqa: F821
 required  # noqa: F821
