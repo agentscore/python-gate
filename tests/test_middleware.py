@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import httpx
@@ -140,6 +141,49 @@ class TestCreateSessionOnMissing:
         assert resp.status_code == 200
         assert assess_route.call_count == 1
         assert session_route.call_count == 0
+
+    @respx.mock
+    def test_sends_first_class_fields_in_session_request(self):
+        route = respx.post(SESSIONS_URL).mock(return_value=httpx.Response(200, json=SESSION_RESPONSE))
+
+        app = _make_app(
+            create_session_on_missing=CreateSessionOnMissing(
+                api_key="ask_session_key",
+                context="Wine purchase verification",
+                return_url="https://example.com/callback",
+                payment_methods=["stripe", "tempo"],
+                product_name="Cabernet Reserve 2023",
+            ),
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/")
+
+        assert resp.status_code == 403
+        assert route.call_count == 1
+        body = json.loads(route.calls[0].request.content)
+        assert body["context"] == "Wine purchase verification"
+        assert body["return_url"] == "https://example.com/callback"
+        assert body["payment_methods"] == ["stripe", "tempo"]
+        assert body["product_name"] == "Cabernet Reserve 2023"
+
+    @respx.mock
+    def test_omits_unset_fields_from_session_request(self):
+        route = respx.post(SESSIONS_URL).mock(return_value=httpx.Response(200, json=SESSION_RESPONSE))
+
+        app = _make_app(
+            create_session_on_missing=CreateSessionOnMissing(
+                api_key="ask_session_key",
+                context="Quick check",
+            ),
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        client.get("/")
+
+        body = json.loads(route.calls[0].request.content)
+        assert body["context"] == "Quick check"
+        assert "return_url" not in body
+        assert "payment_methods" not in body
+        assert "product_name" not in body
 
     @respx.mock
     def test_fail_open_takes_precedence(self):

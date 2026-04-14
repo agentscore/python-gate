@@ -27,6 +27,10 @@ class CreateSessionOnMissing:
 
     api_key: str
     base_url: str = "https://api.agentscore.sh"
+    context: str | None = None
+    return_url: str | None = None
+    payment_methods: list[str] | None = None
+    product_name: str | None = None
 
 
 def _default_extract_identity(request: Request) -> AgentIdentity | None:
@@ -125,15 +129,25 @@ class AgentScoreGate:
             if self._create_session_on_missing:
                 try:
                     session_base = self._create_session_on_missing.base_url.rstrip("/")
+                    session_body: dict[str, Any] = {}
+                    cfg = self._create_session_on_missing
+                    if cfg.context is not None:
+                        session_body["context"] = cfg.context
+                    if cfg.return_url is not None:
+                        session_body["return_url"] = cfg.return_url
+                    if cfg.payment_methods is not None:
+                        session_body["payment_methods"] = cfg.payment_methods
+                    if cfg.product_name is not None:
+                        session_body["product_name"] = cfg.product_name
                     async with httpx.AsyncClient(timeout=10.0) as client:
                         resp = await client.post(
                             f"{session_base}/v1/sessions",
                             headers={
-                                "X-API-Key": self._create_session_on_missing.api_key,
+                                "X-API-Key": cfg.api_key,
                                 "Content-Type": "application/json",
                                 "Accept": "application/json",
                             },
-                            json={},
+                            json=session_body,
                         )
                     if resp.is_success:
                         data = resp.json()
