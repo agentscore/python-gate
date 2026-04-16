@@ -150,8 +150,6 @@ class TestCreateSessionOnMissing:
             create_session_on_missing=CreateSessionOnMissing(
                 api_key="ask_session_key",
                 context="Wine purchase verification",
-                return_url="https://example.com/callback",
-                payment_methods=["stripe", "tempo"],
                 product_name="Cabernet Reserve 2023",
             ),
         )
@@ -162,8 +160,6 @@ class TestCreateSessionOnMissing:
         assert route.call_count == 1
         body = json.loads(route.calls[0].request.content)
         assert body["context"] == "Wine purchase verification"
-        assert body["return_url"] == "https://example.com/callback"
-        assert body["payment_methods"] == ["stripe", "tempo"]
         assert body["product_name"] == "Cabernet Reserve 2023"
 
     @respx.mock
@@ -181,8 +177,6 @@ class TestCreateSessionOnMissing:
 
         body = json.loads(route.calls[0].request.content)
         assert body["context"] == "Quick check"
-        assert "return_url" not in body
-        assert "payment_methods" not in body
         assert "product_name" not in body
 
     @respx.mock
