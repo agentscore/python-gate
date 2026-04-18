@@ -42,7 +42,6 @@ class AgentScoreMiddleware:
             min_age=config.get("min_age"),
             blocked_jurisdictions=config.get("blocked_jurisdictions"),
             allowed_jurisdictions=config.get("allowed_jurisdictions"),
-            require_entity_type=config.get("require_entity_type"),
             fail_open=config.get("fail_open", False),
             cache_seconds=config.get("cache_seconds", 300),
             base_url=config.get("base_url", "https://api.agentscore.sh"),

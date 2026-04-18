@@ -34,7 +34,6 @@ class GateClient:
         min_age: int | None = None,
         blocked_jurisdictions: list[str] | None = None,
         allowed_jurisdictions: list[str] | None = None,
-        require_entity_type: str | None = None,
         fail_open: bool = False,
         cache_seconds: int = DEFAULT_CACHE_SECONDS,
         base_url: str = DEFAULT_BASE_URL,
@@ -61,8 +60,6 @@ class GateClient:
             self._policy["blocked_jurisdictions"] = blocked_jurisdictions
         if allowed_jurisdictions is not None:
             self._policy["allowed_jurisdictions"] = allowed_jurisdictions
-        if require_entity_type is not None:
-            self._policy["require_entity_type"] = require_entity_type
 
         self._async_client = httpx.AsyncClient(timeout=10.0)
         self._sync_client = httpx.Client(timeout=10.0)
