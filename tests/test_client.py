@@ -71,153 +71,15 @@ class TestParseResponse:
         assert result.decision == "deny"
         assert "low_score" in result.reasons
 
-    def test_parses_score(self):
-        """Score fields are parsed into a ScoreDetail dataclass."""
-        client = _make_client()
-        resp = MagicMock(spec=httpx.Response)
-        resp.status_code = 200
-        resp.is_success = True
-        resp.json.return_value = {
-            "decision": "allow",
-            "decision_reasons": [],
-            "score": {
-                "value": 85,
-                "grade": "B",
-                "scored_at": "2026-03-28T00:00:00Z",
-                "status": "scored",
-                "version": "v1",
-            },
-        }
-
-        result = client._parse_response(resp)
-        assert result.score is not None
-        assert result.score.value == 85
-        assert result.score.grade == "B"
-        assert result.score.status == "scored"
-        assert result.score.scored_at == "2026-03-28T00:00:00Z"
-        assert result.score.version == "v1"
-        assert result.score.confidence is None
-        assert result.score.dimensions is None
-
-    def test_parses_activity(self):
-        """Activity fields are parsed into an Activity dataclass."""
-        client = _make_client()
-        resp = MagicMock(spec=httpx.Response)
-        resp.status_code = 200
-        resp.is_success = True
-        resp.json.return_value = {
-            "decision": "allow",
-            "decision_reasons": [],
-            "chains": [
-                {
-                    "chain": "base",
-                    "activity": {
-                        "total_verified_transactions": 10,
-                        "total_candidate_transactions": 25,
-                        "counterparties_count": 5,
-                        "active_days": 30,
-                        "active_months": 3,
-                        "as_verified_payer": 4,
-                        "as_verified_payee": 6,
-                        "as_candidate_payer": 12,
-                        "as_candidate_payee": 13,
-                        "first_verified_tx_at": "2025-01-01T00:00:00Z",
-                        "last_verified_tx_at": "2026-03-01T00:00:00Z",
-                    },
-                },
-            ],
-        }
-
-        result = client._parse_response(resp)
-        assert result.activity is not None
-        assert result.activity.total_verified_transactions == 10
-        assert result.activity.counterparties_count == 5
-        assert result.activity.active_days == 30
-        assert result.activity.as_verified_payer == 4
-        assert result.activity.first_verified_tx_at == "2025-01-01T00:00:00Z"
-
-    def test_parses_classification(self):
-        """Classification fields are parsed into a Classification dataclass."""
-        client = _make_client()
-        resp = MagicMock(spec=httpx.Response)
-        resp.status_code = 200
-        resp.is_success = True
-        resp.json.return_value = {
-            "decision": "allow",
-            "decision_reasons": [],
-            "chains": [
-                {
-                    "chain": "base",
-                    "classification": {
-                        "entity_type": "agent",
-                        "confidence": 0.95,
-                        "is_known": True,
-                        "is_known_erc8004_agent": True,
-                        "has_verified_payment_activity": True,
-                        "has_candidate_payment_activity": True,
-                        "reasons": ["registered_erc8004"],
-                    },
-                },
-            ],
-        }
-
-        result = client._parse_response(resp)
-        assert result.classification is not None
-        assert result.classification.entity_type == "agent"
-        assert result.classification.is_known_erc8004_agent is True
-        assert result.classification.has_verified_payment_activity is True
-        assert "registered_erc8004" in result.classification.reasons
-
-    def test_parses_identity(self):
-        """Identity fields are parsed into an Identity dataclass."""
-        client = _make_client()
-        resp = MagicMock(spec=httpx.Response)
-        resp.status_code = 200
-        resp.is_success = True
-        resp.json.return_value = {
-            "decision": "allow",
-            "decision_reasons": [],
-            "chains": [
-                {
-                    "chain": "base",
-                    "identity": {
-                        "ens_name": "agent.eth",
-                        "github_url": "https://github.com/example",
-                        "website_url": "https://example.com",
-                    },
-                },
-            ],
-        }
-
-        result = client._parse_response(resp)
-        assert result.identity is not None
-        assert result.identity.ens_name == "agent.eth"
-        assert result.identity.github_url == "https://github.com/example"
-
-    def test_missing_reputation_fields_are_none(self):
-        """When reputation fields are absent, typed fields are None."""
-        client = _make_client()
-        resp = MagicMock(spec=httpx.Response)
-        resp.status_code = 200
-        resp.is_success = True
-        resp.json.return_value = {"decision": "allow", "decision_reasons": []}
-
-        result = client._parse_response(resp)
-        assert result.score is None
-        assert result.activity is None
-        assert result.classification is None
-        assert result.identity is None
-
 
 class TestBuildBody:
     def test_includes_policy_when_set(self):
-        client = _make_client(min_score=50, min_grade="B")
+        client = _make_client(require_kyc=True)
         body = client._build_body("0xabc")
         assert body["address"] == "0xabc"
         assert "chain" not in body
         assert "policy" in body
-        assert body["policy"]["min_score"] == 50
-        assert body["policy"]["min_grade"] == "B"
+        assert body["policy"]["require_kyc"] is True
 
     def test_no_policy_when_empty(self):
         client = _make_client()
@@ -348,8 +210,6 @@ class TestCompliancePolicyFields:
 
     def test_build_body_includes_all_compliance_fields(self):
         client = _make_client(
-            min_grade="B",
-            min_score=70,
             require_kyc=True,
             require_sanctions_clear=True,
             min_age=30,
@@ -358,8 +218,6 @@ class TestCompliancePolicyFields:
         )
         body = client._build_body("0xabc")
         assert body["policy"] == {
-            "min_grade": "B",
-            "min_score": 70,
             "require_kyc": True,
             "require_sanctions_clear": True,
             "min_age": 30,
@@ -380,7 +238,6 @@ class TestOperatorVerificationParsing:
             "operator_verification": {
                 "level": "kyc_verified",
                 "operator_type": "business",
-                "claimed_at": "2024-06-01T00:00:00Z",
                 "verified_at": "2024-06-15T00:00:00Z",
             },
         }
@@ -389,7 +246,6 @@ class TestOperatorVerificationParsing:
         assert result.operator_verification is not None
         assert result.operator_verification.level == "kyc_verified"
         assert result.operator_verification.operator_type == "business"
-        assert result.operator_verification.claimed_at == "2024-06-01T00:00:00Z"
         assert result.operator_verification.verified_at == "2024-06-15T00:00:00Z"
 
     def test_operator_verification_is_none_when_absent(self):
@@ -460,7 +316,6 @@ class TestComplianceDenyIntegration:
             "operator_verification": {
                 "level": "none",
                 "operator_type": None,
-                "claimed_at": None,
                 "verified_at": None,
             },
             "verify_url": "https://agentscore.sh/verify/xyz789",
@@ -495,3 +350,151 @@ class TestComplianceDenyIntegration:
         body = json.loads(route.calls[0].request.content)
         assert body["policy"]["require_kyc"] is True
         assert body["policy"]["require_sanctions_clear"] is True
+
+
+class TestAgentIdentityDataclass:
+    def test_construct_with_address_only(self):
+        from agentscore_gate.types import AgentIdentity
+
+        identity = AgentIdentity(address="0xabc")
+        assert identity.address == "0xabc"
+        assert identity.operator_token is None
+
+    def test_construct_with_operator_token_only(self):
+        from agentscore_gate.types import AgentIdentity
+
+        identity = AgentIdentity(operator_token="opc_test")
+        assert identity.address is None
+        assert identity.operator_token == "opc_test"
+
+    def test_construct_with_both(self):
+        from agentscore_gate.types import AgentIdentity
+
+        identity = AgentIdentity(address="0xabc", operator_token="opc_test")
+        assert identity.address == "0xabc"
+        assert identity.operator_token == "opc_test"
+
+    def test_construct_empty_defaults_to_none(self):
+        from agentscore_gate.types import AgentIdentity
+
+        identity = AgentIdentity()
+        assert identity.address is None
+        assert identity.operator_token is None
+
+
+class TestCheckIdentity:
+    @respx.mock
+    def test_check_identity_sends_operator_token(self):
+        from agentscore_gate.types import AgentIdentity
+
+        client = _make_client()
+        route = respx.post(ASSESS_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={"decision": "allow", "decision_reasons": []},
+            )
+        )
+
+        identity = AgentIdentity(operator_token="opc_abc")
+        client.check_identity(identity)
+
+        body = json.loads(route.calls[0].request.content)
+        assert body["operator_token"] == "opc_abc"
+        assert "address" not in body
+
+    @respx.mock
+    def test_check_identity_sends_address(self):
+        from agentscore_gate.types import AgentIdentity
+
+        client = _make_client()
+        route = respx.post(ASSESS_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={"decision": "allow", "decision_reasons": []},
+            )
+        )
+
+        identity = AgentIdentity(address="0xABC")
+        client.check_identity(identity)
+
+        body = json.loads(route.calls[0].request.content)
+        assert body["address"] == "0xABC"
+        assert "operator_token" not in body
+
+    @respx.mock
+    def test_check_identity_sends_both(self):
+        from agentscore_gate.types import AgentIdentity
+
+        client = _make_client()
+        route = respx.post(ASSESS_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={"decision": "allow", "decision_reasons": []},
+            )
+        )
+
+        identity = AgentIdentity(address="0xABC", operator_token="opc_both")
+        client.check_identity(identity)
+
+        body = json.loads(route.calls[0].request.content)
+        assert body["address"] == "0xABC"
+        assert body["operator_token"] == "opc_both"
+
+
+class TestAcheckIdentity:
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_acheck_identity_sends_operator_token(self):
+        from agentscore_gate.types import AgentIdentity
+
+        client = _make_client()
+        route = respx.post(ASSESS_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={"decision": "allow", "decision_reasons": []},
+            )
+        )
+
+        identity = AgentIdentity(operator_token="opc_async")
+        await client.acheck_identity(identity)
+
+        body = json.loads(route.calls[0].request.content)
+        assert body["operator_token"] == "opc_async"
+        assert "address" not in body
+
+
+class TestCacheKeyIdentity:
+    def test_cache_key_prefers_operator_token(self):
+        client = _make_client()
+        key = client._cache_key(address="0xABC", operator_token="OPC_TEST")
+        assert key == "opc_test"
+
+    def test_cache_key_falls_back_to_address(self):
+        client = _make_client()
+        key = client._cache_key(address="0xABC")
+        assert key == "0xabc"
+
+    def test_cache_key_lowercases_operator_token(self):
+        client = _make_client()
+        key = client._cache_key(operator_token="OPC_UPPER")
+        assert key == "opc_upper"
+
+
+class TestBuildBodyIdentity:
+    def test_build_body_with_operator_token_only(self):
+        client = _make_client()
+        body = client._build_body(operator_token="opc_test")
+        assert body["operator_token"] == "opc_test"
+        assert "address" not in body
+
+    def test_build_body_with_both(self):
+        client = _make_client()
+        body = client._build_body(address="0xabc", operator_token="opc_test")
+        assert body["address"] == "0xabc"
+        assert body["operator_token"] == "opc_test"
+
+    def test_build_body_address_only_backwards_compat(self):
+        client = _make_client()
+        body = client._build_body("0xabc")
+        assert body["address"] == "0xabc"
+        assert "operator_token" not in body

@@ -18,48 +18,32 @@ def _assess(body=None):
     ).json()
 
 
-def test_assess_top_level_shape():
+def test_assess_flat_decision_shape():
     data = _assess()
 
-    assert isinstance(data["subject"]["chains"], list)
-    assert len(data["subject"]["chains"]) > 0
-
-    assert "value" in data["score"]
-    assert "grade" in data["score"]
-    assert "status" in data["score"]
-    assert "version" in data["score"]
-    assert "confidence" not in data["score"]
-    assert "dimensions" not in data["score"]
-
-    assert isinstance(data["chains"], list)
-    assert len(data["chains"]) > 0
+    assert "decision" in data
     assert isinstance(data["decision_reasons"], list)
-    assert isinstance(data["agents"], list)
-    assert isinstance(data["caveats"], list)
-    assert "data_semantics" in data
-    assert "updated_at" in data
-    assert "classification" not in data
+    assert data["identity_method"] == "wallet"
+    assert "operator_verification" in data
+    assert isinstance(data.get("on_the_fly"), bool)
 
 
-def test_assess_chain_entry_full_fields():
+def test_assess_without_policy_allows():
     data = _assess()
-    chain = data["chains"][0]
 
-    assert "confidence" in chain["score"]
-    assert "dimensions" in chain["score"]
-    assert "entity_type" in chain["classification"]
-    assert "ens_name" in chain["identity"]
-    assert "as_verified_payer" in chain["activity"]
-    assert "active_days" in chain["activity"]
-    assert "first_candidate_tx_at" in chain["activity"]
-    assert "metadata_kind" in chain["evidence_summary"]
+    assert data["decision"] == "allow"
+    assert "no_policy_applied" in data["decision_reasons"]
 
 
 def test_assess_policy_deny():
-    data = _assess({"policy": {"min_score": 999}})
+    data = _assess({"policy": {"require_kyc": True}})
 
     assert data["decision"] == "deny"
-    assert len(data["decision_reasons"]) > 0
+    assert "kyc_required" in data["decision_reasons"]
+    assert "verify_url" in data
+    assert "/verify" in data["verify_url"]
+    assert "policy_result" in data
+    assert data["policy_result"]["all_passed"] is False
 
 
 def test_assess_operator_score():

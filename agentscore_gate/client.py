@@ -10,16 +10,9 @@ import httpx
 
 from agentscore_gate.cache import TTLCache
 from agentscore_gate.types import (
-    Activity,
+    AgentIdentity,
     AssessResult,
-    Classification,
-    Grade,
-    Identity,
     OperatorVerification,
-    PolicyCheck,
-    PolicyResult,
-    Reputation,
-    ScoreDetail,
 )
 
 DEFAULT_BASE_URL = "https://api.agentscore.sh"
@@ -36,13 +29,11 @@ class GateClient:
         self,
         *,
         api_key: str,
-        min_grade: Grade | None = None,
-        min_score: int | None = None,
-        require_verified_activity: bool | None = None,
         require_kyc: bool | None = None,
         require_sanctions_clear: bool | None = None,
         min_age: int | None = None,
         blocked_jurisdictions: list[str] | None = None,
+        allowed_jurisdictions: list[str] | None = None,
         require_entity_type: str | None = None,
         fail_open: bool = False,
         cache_seconds: int = DEFAULT_CACHE_SECONDS,
@@ -60,12 +51,6 @@ class GateClient:
         self._cache: TTLCache[AssessResult] = TTLCache(cache_seconds)
 
         self._policy: dict[str, Any] = {}
-        if min_grade is not None:
-            self._policy["min_grade"] = min_grade
-        if min_score is not None:
-            self._policy["min_score"] = min_score
-        if require_verified_activity is not None:
-            self._policy["require_verified_payment_activity"] = require_verified_activity
         if require_kyc is not None:
             self._policy["require_kyc"] = require_kyc
         if require_sanctions_clear is not None:
@@ -74,17 +59,27 @@ class GateClient:
             self._policy["min_age"] = min_age
         if blocked_jurisdictions is not None:
             self._policy["blocked_jurisdictions"] = blocked_jurisdictions
+        if allowed_jurisdictions is not None:
+            self._policy["allowed_jurisdictions"] = allowed_jurisdictions
         if require_entity_type is not None:
             self._policy["require_entity_type"] = require_entity_type
 
         self._async_client = httpx.AsyncClient(timeout=10.0)
         self._sync_client = httpx.Client(timeout=10.0)
 
-    def _cache_key(self, address: str) -> str:
-        return address.lower()
+    def _cache_key(self, address: str | None = None, operator_token: str | None = None) -> str:
+        if operator_token:
+            return operator_token.lower()
+        return (address or "").lower()
 
-    def _build_body(self, address: str, chain: str | None = None) -> dict[str, Any]:
-        body: dict[str, Any] = {"address": address}
+    def _build_body(
+        self, address: str | None = None, chain: str | None = None, operator_token: str | None = None
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if address:
+            body["address"] = address
+        if operator_token:
+            body["operator_token"] = operator_token
         effective_chain = chain or self._chain
         if effective_chain:
             body["chain"] = effective_chain
@@ -113,114 +108,14 @@ class GateClient:
         reasons: list[str] = data.get("decision_reasons", [])
         allow = decision == "allow" or decision is None
 
-        score_data = data.get("score")
-        score = (
-            ScoreDetail(
-                value=score_data.get("value", 0),
-                grade=score_data.get("grade", "F"),
-                status=score_data.get("status", "known_unscored"),
-                confidence=score_data.get("confidence"),
-                scored_at=score_data.get("scored_at"),
-                version=score_data.get("version"),
-                dimensions=score_data.get("dimensions"),
-            )
-            if isinstance(score_data, dict)
-            else None
-        )
-
-        chains = data.get("chains", [])
-        first_chain = chains[0] if chains else {}
-
-        act_data = first_chain.get("activity") if isinstance(first_chain, dict) else None
-        activity = (
-            Activity(
-                total_verified_transactions=act_data.get("total_verified_transactions", 0),
-                total_candidate_transactions=act_data.get("total_candidate_transactions", 0),
-                counterparties_count=act_data.get("counterparties_count", 0),
-                active_days=act_data.get("active_days", 0),
-                active_months=act_data.get("active_months", 0),
-                as_verified_payer=act_data.get("as_verified_payer", 0),
-                as_verified_payee=act_data.get("as_verified_payee", 0),
-                as_candidate_payer=act_data.get("as_candidate_payer", 0),
-                as_candidate_payee=act_data.get("as_candidate_payee", 0),
-                first_verified_tx_at=act_data.get("first_verified_tx_at"),
-                last_verified_tx_at=act_data.get("last_verified_tx_at"),
-                first_candidate_tx_at=act_data.get("first_candidate_tx_at"),
-                last_candidate_tx_at=act_data.get("last_candidate_tx_at"),
-            )
-            if isinstance(act_data, dict)
-            else None
-        )
-
-        top_cls = data.get("classification") if isinstance(data.get("classification"), dict) else {}
-        chain_cls = first_chain.get("classification", {}) if isinstance(first_chain, dict) else {}
-        cls_data = {**chain_cls, **top_cls} if (top_cls or chain_cls) else None
-        classification = (
-            Classification(
-                entity_type=cls_data.get("entity_type"),
-                confidence=cls_data.get("confidence", 0.0),
-                is_known=cls_data.get("is_known", False),
-                is_known_erc8004_agent=cls_data.get("is_known_erc8004_agent", False),
-                has_verified_payment_activity=cls_data.get("has_verified_payment_activity", False),
-                has_candidate_payment_activity=cls_data.get("has_candidate_payment_activity", False),
-                reasons=cls_data.get("reasons", []),
-            )
-            if isinstance(cls_data, dict)
-            else None
-        )
-
-        id_data = first_chain.get("identity") if isinstance(first_chain, dict) else None
-        identity = (
-            Identity(
-                ens_name=id_data.get("ens_name"),
-                github_url=id_data.get("github_url"),
-                website_url=id_data.get("website_url"),
-            )
-            if isinstance(id_data, dict)
-            else None
-        )
-
-        rep_data = data.get("reputation")
-        reputation = (
-            Reputation(
-                feedback_count=rep_data.get("feedback_count", 0),
-                client_count=rep_data.get("client_count", 0),
-                trust_avg=rep_data.get("trust_avg"),
-                uptime_avg=rep_data.get("uptime_avg"),
-                activity_avg=rep_data.get("activity_avg"),
-                last_feedback_at=rep_data.get("last_feedback_at"),
-            )
-            if isinstance(rep_data, dict)
-            else None
-        )
-
         ov_data = data.get("operator_verification")
         operator_verification = (
             OperatorVerification(
                 level=ov_data.get("level", "none"),
                 operator_type=ov_data.get("operator_type"),
-                claimed_at=ov_data.get("claimed_at"),
                 verified_at=ov_data.get("verified_at"),
             )
             if isinstance(ov_data, dict)
-            else None
-        )
-
-        pr_data = data.get("policy_result")
-        policy_result = (
-            PolicyResult(
-                all_passed=pr_data.get("all_passed", False),
-                checks=[
-                    PolicyCheck(
-                        rule=c.get("rule", ""),
-                        passed=c.get("passed", False),
-                        required=c.get("required"),
-                        actual=c.get("actual"),
-                    )
-                    for c in pr_data.get("checks", [])
-                ],
-            )
-            if isinstance(pr_data, dict)
             else None
         )
 
@@ -228,21 +123,19 @@ class GateClient:
             allow=allow,
             decision=decision,
             reasons=reasons,
-            score=score,
-            activity=activity,
-            classification=classification,
-            identity=identity,
-            reputation=reputation,
+            identity_method=data.get("identity_method"),
             operator_verification=operator_verification,
             resolved_operator=data.get("resolved_operator"),
             verify_url=data.get("verify_url"),
-            policy_result=policy_result,
+            policy_result=data.get("policy_result"),
             raw=data,
         )
 
-    def check(self, address: str, chain: str | None = None) -> AssessResult:
-        """Synchronous assess call with caching."""
-        key = self._cache_key(address)
+    def check(
+        self, address: str | None = None, chain: str | None = None, operator_token: str | None = None
+    ) -> AssessResult:
+        """Synchronous assess call with caching. Accepts address and/or operator_token."""
+        key = self._cache_key(address, operator_token)
 
         cached = self._cache.get(key)
         if cached is not None:
@@ -251,15 +144,17 @@ class GateClient:
         resp = self._sync_client.post(
             f"{self._base_url}/v1/assess",
             headers=self._headers(),
-            content=json.dumps(self._build_body(address, chain)),
+            content=json.dumps(self._build_body(address, chain, operator_token)),
         )
         result = self._parse_response(resp)
         self._cache.set(key, result)
         return result
 
-    async def acheck(self, address: str, chain: str | None = None) -> AssessResult:
-        """Asynchronous assess call with caching."""
-        key = self._cache_key(address)
+    async def acheck(
+        self, address: str | None = None, chain: str | None = None, operator_token: str | None = None
+    ) -> AssessResult:
+        """Asynchronous assess call with caching. Accepts address and/or operator_token."""
+        key = self._cache_key(address, operator_token)
 
         cached = self._cache.get(key)
         if cached is not None:
@@ -268,11 +163,19 @@ class GateClient:
         resp = await self._async_client.post(
             f"{self._base_url}/v1/assess",
             headers=self._headers(),
-            content=json.dumps(self._build_body(address, chain)),
+            content=json.dumps(self._build_body(address, chain, operator_token)),
         )
         result = self._parse_response(resp)
         self._cache.set(key, result)
         return result
+
+    def check_identity(self, identity: AgentIdentity, chain: str | None = None) -> AssessResult:
+        """Convenience method to check using an AgentIdentity object."""
+        return self.check(address=identity.address, chain=chain, operator_token=identity.operator_token)
+
+    async def acheck_identity(self, identity: AgentIdentity, chain: str | None = None) -> AssessResult:
+        """Async convenience method to check using an AgentIdentity object."""
+        return await self.acheck(address=identity.address, chain=chain, operator_token=identity.operator_token)
 
 
 class PaymentRequiredError(Exception):

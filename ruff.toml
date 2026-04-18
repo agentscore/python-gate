@@ -31,7 +31,8 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
-"tests/**" = ["D", "S101"]
+"tests/**" = ["D", "S101", "S105", "S106", "RUF012"]
+"agentscore_gate/**" = ["S105", "S106"]
 "vulture_whitelist.py" = ["B018"]
 
 [lint.pydocstyle]

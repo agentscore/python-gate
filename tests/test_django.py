@@ -14,7 +14,7 @@ if not settings.configured:
         AGENTSCORE_GATE={"api_key": "test-key"},
         MIDDLEWARE=[],
         ROOT_URLCONF="tests.test_django",
-        SECRET_KEY="test-secret",  # noqa: S106
+        SECRET_KEY="test-secret",
     )
     django.setup()
 
@@ -75,7 +75,7 @@ class TestDjangoMiddleware:
         resp = mw(request)
         assert resp.status_code == 403
         data = json.loads(resp.content)
-        assert data["error"] == "missing_wallet_address"
+        assert data["error"] == "missing_identity"
 
     def test_missing_wallet_fail_open(self) -> None:
         mw = self._make_middleware(fail_open=True)
@@ -121,9 +121,11 @@ class TestDjangoMiddleware:
 
         mw = self._make_middleware(extract_chain=custom_extract_chain)
         request = self.factory.get("/", HTTP_X_WALLET_ADDRESS="0xabc")
-        with patch("agentscore_gate.django.GateClient.check", return_value=_mock_result()) as mock_check:
+        with patch("agentscore_gate.django.GateClient.check_identity", return_value=_mock_result()) as mock_check:
             mw(request)
-            mock_check.assert_called_once_with("0xabc", "ethereum")
+            call_args = mock_check.call_args
+            assert call_args[0][0].address == "0xabc"
+            assert call_args[0][1] == "ethereum"
 
     def test_null_decision_allows_request(self) -> None:
         mw = self._make_middleware()
@@ -211,3 +213,59 @@ class TestDjangoMiddleware:
             assert resp.status_code == 403
             data = json.loads(resp.content)
             assert data["error"] == "wallet_not_trusted"
+
+
+class TestDjangoIdentityModel:
+    """Django middleware identity model tests."""
+
+    factory = RequestFactory()
+
+    def _make_middleware(self, **config_overrides: object) -> AgentScoreMiddleware:
+        original = settings.AGENTSCORE_GATE.copy()
+        settings.AGENTSCORE_GATE = {**original, **config_overrides}
+        try:
+            return AgentScoreMiddleware(_ok_response)
+        finally:
+            settings.AGENTSCORE_GATE = original
+
+    def test_default_extract_identity_returns_operator_token(self) -> None:
+        identity = AgentScoreMiddleware._default_extract_identity(
+            self.factory.get("/", HTTP_X_OPERATOR_TOKEN="opc_django", HTTP_X_WALLET_ADDRESS="0xabc")
+        )
+        assert identity is not None
+        assert identity.operator_token == "opc_django"
+        assert identity.address == "0xabc"
+
+    def test_default_extract_identity_address_only(self) -> None:
+        identity = AgentScoreMiddleware._default_extract_identity(self.factory.get("/", HTTP_X_WALLET_ADDRESS="0xabc"))
+        assert identity is not None
+        assert identity.address == "0xabc"
+        assert identity.operator_token is None
+
+    def test_default_extract_identity_returns_none_when_empty(self) -> None:
+        identity = AgentScoreMiddleware._default_extract_identity(self.factory.get("/"))
+        assert identity is None
+
+    def test_missing_identity_returns_403(self) -> None:
+        mw = self._make_middleware()
+        request = self.factory.get("/")
+        resp = mw(request)
+        assert resp.status_code == 403
+        data = json.loads(resp.content)
+        assert data["error"] == "missing_identity"
+
+    def test_missing_identity_fail_open(self) -> None:
+        mw = self._make_middleware(fail_open=True)
+        request = self.factory.get("/")
+        resp = mw(request)
+        assert resp.status_code == 200
+
+    def test_operator_token_header_calls_check_identity(self) -> None:
+        mw = self._make_middleware()
+        request = self.factory.get("/", HTTP_X_OPERATOR_TOKEN="opc_django_test")
+        with patch("agentscore_gate.django.GateClient.check_identity", return_value=_mock_result()) as mock_check:
+            resp = mw(request)
+            assert resp.status_code == 200
+            call_args = mock_check.call_args
+            identity = call_args[0][0]
+            assert identity.operator_token == "opc_django_test"
