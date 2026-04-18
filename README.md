@@ -54,7 +54,6 @@ AGENTSCORE_GATE = {
 | `min_age` | `int` | `None` | Minimum age bracket (18 or 21) |
 | `blocked_jurisdictions` | `list[str]` | `None` | ISO country codes to block |
 | `allowed_jurisdictions` | `list[str]` | `None` | ISO country codes to allow |
-| `require_entity_type` | `str` | `None` | Required operator type |
 | `fail_open` | `bool` | `False` | Allow requests when API unreachable |
 | `cache_seconds` | `int` | `300` | Cache TTL |
 | `extract_identity` | `callable` | Reads headers | Custom identity extractor |

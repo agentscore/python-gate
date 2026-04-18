@@ -143,14 +143,12 @@ class TestFlaskGate:
                 require_sanctions_clear=True,
                 min_age=90,
                 blocked_jurisdictions=["KP", "IR"],
-                require_entity_type="agent",
             )
             call_kwargs = mock_cls.call_args[1]
             assert call_kwargs["require_kyc"] is True
             assert call_kwargs["require_sanctions_clear"] is True
             assert call_kwargs["min_age"] == 90
             assert call_kwargs["blocked_jurisdictions"] == ["KP", "IR"]
-            assert call_kwargs["require_entity_type"] == "agent"
 
     def test_deny_includes_compliance_reasons(self) -> None:
         app = _make_app()

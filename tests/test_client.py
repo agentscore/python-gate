@@ -203,18 +203,12 @@ class TestCompliancePolicyFields:
         body = client._build_body("0xabc")
         assert body["policy"]["blocked_jurisdictions"] == ["KP", "IR"]
 
-    def test_build_body_includes_require_entity_type(self):
-        client = _make_client(require_entity_type="agent")
-        body = client._build_body("0xabc")
-        assert body["policy"]["require_entity_type"] == "agent"
-
     def test_build_body_includes_all_compliance_fields(self):
         client = _make_client(
             require_kyc=True,
             require_sanctions_clear=True,
             min_age=30,
             blocked_jurisdictions=["KP"],
-            require_entity_type="agent",
         )
         body = client._build_body("0xabc")
         assert body["policy"] == {
@@ -222,7 +216,6 @@ class TestCompliancePolicyFields:
             "require_sanctions_clear": True,
             "min_age": 30,
             "blocked_jurisdictions": ["KP"],
-            "require_entity_type": "agent",
         }
 
 
