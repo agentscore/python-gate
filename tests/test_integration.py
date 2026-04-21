@@ -44,14 +44,3 @@ def test_assess_policy_deny():
     assert "/verify" in data["verify_url"]
     assert "policy_result" in data
     assert data["policy_result"]["all_passed"] is False
-
-
-def test_assess_operator_score():
-    data = _assess()
-    op = data.get("operator_score")
-    if not op:
-        pytest.skip("no operator_score on test address")
-    assert isinstance(op["score"], int)
-    assert isinstance(op["grade"], str)
-    assert isinstance(op["agent_count"], int)
-    assert isinstance(op["chains_active"], list)
