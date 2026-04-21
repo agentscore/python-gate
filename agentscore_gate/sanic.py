@@ -55,6 +55,8 @@ def _default_on_denied(_request: Request, reason: DenialReason) -> tuple[dict[st
         body["poll_secret"] = reason.poll_secret
     if reason.agent_instructions:
         body["agent_instructions"] = reason.agent_instructions
+    if reason.extra:
+        body.update(reason.extra)
     return body, 403
 
 
@@ -124,6 +126,7 @@ def agentscore_gate(
                 session_reason = await try_create_session_denial_reason(
                     create_session_on_missing,
                     client.user_agent,
+                    request,
                 )
                 if session_reason is not None:
                     body, status = _on_denied(request, session_reason)

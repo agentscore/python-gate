@@ -40,6 +40,11 @@ class DenialReason:
     session_id: str | None = None
     poll_secret: str | None = None
     agent_instructions: str | None = None
+    # Extra fields returned from ``CreateSessionOnMissing.on_before_session`` hook.
+    # Merged into the default 403 body; custom ``on_denied`` handlers can spread
+    # these into their own response shape (e.g. to include a merchant-minted
+    # ``order_id``). See ``agentscore_gate.sessions.CreateSessionOnMissing``.
+    extra: dict[str, Any] | None = None
 
 
 @dataclass

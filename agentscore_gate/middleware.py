@@ -54,6 +54,8 @@ async def _default_on_denied(_request: Request, reason: DenialReason) -> JSONRes
         body["poll_secret"] = reason.poll_secret
     if reason.agent_instructions:
         body["agent_instructions"] = reason.agent_instructions
+    if reason.extra:
+        body.update(reason.extra)
     return JSONResponse(body, status_code=403)
 
 
@@ -132,6 +134,7 @@ class AgentScoreGate:
                 session_reason = await try_create_session_denial_reason(
                     self._create_session_on_missing,
                     self._client.user_agent,
+                    request,
                 )
                 if session_reason is not None:
                     response = await self._on_denied(request, session_reason)

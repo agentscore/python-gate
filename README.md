@@ -112,10 +112,12 @@ app.add_middleware(
 )
 ```
 
-### Auto-Create Session (ASGI)
+### Auto-Create Session
+
+Works on every adapter (ASGI, FastAPI, Flask, Django, AIOHTTP, Sanic).
 
 ```python
-from agentscore_gate.middleware import CreateSessionOnMissing
+from agentscore_gate.sessions import CreateSessionOnMissing
 
 app.add_middleware(
     AgentScoreGate,
@@ -124,6 +126,30 @@ app.add_middleware(
 )
 # 403 includes: verify_url, session_id, poll_secret, agent_instructions
 ```
+
+### Per-request hooks
+
+For per-product session context or pre-session side effects (e.g. pre-creating a pending order):
+
+```python
+async def wine_name(request):
+    body = await request.json()
+    product = await lookup_product(body["product_id"])
+    return {"product_name": product.name}
+
+async def create_pending(request, session):
+    body = await request.json()
+    order_id = await db.insert_pending_order(body["product_id"], session["session_id"])
+    return {"order_id": order_id}  # merged into DenialReason.extra → surfaces in the 403 body
+
+create_session_on_missing=CreateSessionOnMissing(
+    api_key="as_live_...",
+    get_session_options=wine_name,
+    on_before_session=create_pending,
+)
+```
+
+Hooks can be sync or `async def`. Flask and Django (sync adapters) accept only sync hooks — async hooks are skipped with a warning.
 
 ## Capture the wallet after payment
 
