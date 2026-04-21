@@ -1,20 +1,27 @@
-"""Flask integration for trust-gating requests using AgentScore."""
+"""Sanic integration for trust-gating requests using AgentScore."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
 from agentscore_gate.client import GateClient, PaymentRequiredError
-from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason_sync
+from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason
 from agentscore_gate.types import AgentIdentity, DenialReason, Network
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from flask import Flask, Request, Response
+    from sanic import HTTPResponse, Request, Sanic
 
 DEFAULT_ADDRESS_HEADER = "x-wallet-address"
 DEFAULT_TOKEN_HEADER = "x-operator-token"
+GATE_STATE_ATTR = "_agentscore_gate"
+
+__all__ = [
+    "CreateSessionOnMissing",
+    "agentscore_gate",
+    "capture_wallet",
+]
 
 
 def _default_extract_identity(request: Request) -> AgentIdentity | None:
@@ -52,7 +59,7 @@ def _default_on_denied(_request: Request, reason: DenialReason) -> tuple[dict[st
 
 
 def agentscore_gate(
-    app: Flask,
+    app: Sanic,
     *,
     api_key: str,
     require_kyc: bool | None = None,
@@ -70,18 +77,17 @@ def agentscore_gate(
     on_denied: Callable[[Request, DenialReason], tuple[dict[str, Any], int]] | None = None,
     create_session_on_missing: CreateSessionOnMissing | None = None,
 ) -> None:
-    """Register AgentScore gate as a Flask before_request handler.
+    """Register AgentScore gate as a Sanic request middleware.
 
     Usage::
 
-        from flask import Flask
-        from agentscore_gate.flask import agentscore_gate
+        from sanic import Sanic
+        from agentscore_gate.sanic import agentscore_gate
 
-        app = Flask(__name__)
+        app = Sanic("myapp")
         agentscore_gate(app, api_key="ask_...", require_kyc=True)
     """
-    from flask import g, jsonify
-    from flask import request as flask_request
+    from sanic import response
 
     client = GateClient(
         api_key=api_key,
@@ -100,38 +106,37 @@ def agentscore_gate(
     _extract_chain = extract_chain or _default_extract_chain
     _on_denied = on_denied or _default_on_denied
 
-    @app.before_request
-    def _agentscore_check() -> Response | None:
-        identity = _resolve_identity(flask_request)
-        # Stash state so capture_wallet() can look up operator_token + client after the handler.
-        g._agentscore_gate = {
-            "client": client,
-            "operator_token": identity.operator_token if identity else None,
-        }
+    @app.middleware("request")
+    async def _agentscore_check(request: Request) -> HTTPResponse | None:
+        identity = _resolve_identity(request)
+        # Stash state on request.ctx so capture_wallet() can look up operator_token + client
+        # after the handler runs.
+        setattr(
+            request.ctx,
+            GATE_STATE_ATTR,
+            {"client": client, "operator_token": identity.operator_token if identity else None},
+        )
+
         if not identity:
             if client.fail_open:
                 return None
-            denial_reason = DenialReason(code="missing_identity")
             if create_session_on_missing is not None:
-                session_reason = try_create_session_denial_reason_sync(
+                session_reason = await try_create_session_denial_reason(
                     create_session_on_missing, client.user_agent,
                 )
                 if session_reason is not None:
-                    denial_reason = session_reason
-            try:
-                body, status = _on_denied(flask_request, denial_reason)
-            except (TypeError, ValueError) as exc:
-                msg = "on_denied must return a (dict, int) tuple, e.g. ({'error': 'denied'}, 403)"
-                raise TypeError(msg) from exc
-            return jsonify(body), status
+                    body, status = _on_denied(request, session_reason)
+                    return response.json(body, status=status)
+            body, status = _on_denied(request, DenialReason(code="missing_identity"))
+            return response.json(body, status=status)
 
-        chain_override = _extract_chain(flask_request)
+        chain_override = _extract_chain(request)
 
         try:
-            result = client.check_identity(identity, chain_override)
+            result = await client.acheck_identity(identity, chain_override)
 
             if result.allow:
-                g.agentscore = result.raw
+                request.ctx.agentscore = result.raw
                 return None
 
             reason = DenialReason(
@@ -140,64 +145,43 @@ def agentscore_gate(
                 reasons=result.reasons,
                 verify_url=result.verify_url,
             )
-            try:
-                body, status = _on_denied(flask_request, reason)
-            except (TypeError, ValueError) as exc:
-                msg = "on_denied must return a (dict, int) tuple, e.g. ({'error': 'denied'}, 403)"
-                raise TypeError(msg) from exc
-            return jsonify(body), status
+            body, status = _on_denied(request, reason)
+            return response.json(body, status=status)
         except PaymentRequiredError:
             if client.fail_open:
                 return None
-            try:
-                body, status = _on_denied(flask_request, DenialReason(code="payment_required"))
-            except (TypeError, ValueError) as exc:
-                msg = "on_denied must return a (dict, int) tuple, e.g. ({'error': 'denied'}, 403)"
-                raise TypeError(msg) from exc
-            return jsonify(body), status
-        except TypeError:
-            raise
+            body, status = _on_denied(request, DenialReason(code="payment_required"))
+            return response.json(body, status=status)
         except Exception:
             if client.fail_open:
                 return None
-            try:
-                body, status = _on_denied(flask_request, DenialReason(code="api_error"))
-            except (TypeError, ValueError) as exc:
-                msg = "on_denied must return a (dict, int) tuple, e.g. ({'error': 'denied'}, 403)"
-                raise TypeError(msg) from exc
-            return jsonify(body), status
+            body, status = _on_denied(request, DenialReason(code="api_error"))
+            return response.json(body, status=status)
 
 
-def capture_wallet(
+async def capture_wallet(
+    request: Request,
     wallet_address: str,
     network: Network,
     idempotency_key: str | None = None,
 ) -> None:
-    """Report a wallet that paid under the operator_token the Flask gate extracted on this request.
+    """Report a wallet that paid under the operator_token the Sanic gate extracted on this request.
 
-    Reads gate state from Flask's ``g`` object — must be called inside a request context after
-    the gate's before_request handler ran. Fire-and-forget: no-ops silently if the request was
-    wallet-authenticated (no operator_token) or the API call fails.
+    Fire-and-forget: no-ops silently if the gate didn't run, the request was wallet-authenticated
+    (no operator_token to associate), or the API call fails.
 
     Usage::
 
         @app.post("/purchase")
-        def purchase():
+        async def purchase(request):
             # ... run payment, recover signer wallet from the payload ...
-            capture_wallet(signer, "evm", idempotency_key=payment_intent_id)
-            return {"ok": True}
+            await capture_wallet(request, signer, "evm", idempotency_key=payment_intent_id)
+            return response.json({"ok": True})
     """
-    from flask import g
-
-    # Accessing `g` outside a request context raises RuntimeError — treat as no-op so background
-    # threads/workers that mistakenly import this helper don't crash user code.
-    try:
-        state = getattr(g, "_agentscore_gate", None)
-    except RuntimeError:
-        return
+    state = getattr(request.ctx, GATE_STATE_ATTR, None)
     if not state or not state.get("operator_token"):
         return
-    state["client"].capture_wallet(
+    await state["client"].acapture_wallet(
         state["operator_token"],
         wallet_address,
         network,

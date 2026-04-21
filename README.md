@@ -3,7 +3,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/agentscore-gate.svg)](https://pypi.org/project/agentscore-gate/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Identity-gating middleware for Python web frameworks using [AgentScore](https://agentscore.sh). Works with FastAPI, Starlette, Flask, and Django.
+Identity-gating middleware for Python web frameworks using [AgentScore](https://agentscore.sh). Native adapters for FastAPI, Flask, Django, AIOHTTP, and Sanic; generic ASGI middleware for Starlette / Litestar / Quart.
 
 ## Install
 
@@ -13,13 +13,28 @@ pip install agentscore-gate
 
 ## Quick Start
 
-### FastAPI
+### FastAPI (native `Depends()`)
 
 ```python
-from fastapi import FastAPI
-from agentscore_gate import AgentScoreGate
+from fastapi import Depends, FastAPI
+from agentscore_gate.fastapi import AgentScoreGate, get_assess_data
 
 app = FastAPI()
+gate = AgentScoreGate(api_key="as_live_...", require_kyc=True, min_age=21)
+
+@app.post("/purchase", dependencies=[Depends(gate)])
+async def purchase(assess = Depends(get_assess_data)):
+    # `assess` is the raw /v1/assess response (or None if fail_open)
+    ...
+```
+
+### Starlette / other ASGI (FastAPI users can use this too)
+
+```python
+from starlette.applications import Starlette
+from agentscore_gate import AgentScoreGate
+
+app = Starlette()
 app.add_middleware(AgentScoreGate, api_key="as_live_...", require_kyc=True)
 ```
 
@@ -42,6 +57,26 @@ AGENTSCORE_GATE = {
     "api_key": "as_live_...",
     "require_kyc": True,
 }
+```
+
+### AIOHTTP
+
+```python
+from aiohttp import web
+from agentscore_gate.aiohttp import agentscore_gate_middleware
+
+app = web.Application()
+app.middlewares.append(agentscore_gate_middleware(api_key="as_live_...", require_kyc=True))
+```
+
+### Sanic
+
+```python
+from sanic import Sanic
+from agentscore_gate.sanic import agentscore_gate
+
+app = Sanic("myapp")
+agentscore_gate(app, api_key="as_live_...", require_kyc=True)
 ```
 
 ## Options
@@ -89,6 +124,78 @@ app.add_middleware(
 )
 # 403 includes: verify_url, session_id, poll_secret, agent_instructions
 ```
+
+## Capture the wallet after payment
+
+After a successful payment, report the signer wallet back to AgentScore so it can build a cross-merchant credential↔wallet profile. Each adapter exposes a `capture_wallet` helper that reads the operator_token the gate already extracted.
+
+### FastAPI (native `Depends()`)
+
+```python
+from fastapi import Depends, Request
+from agentscore_gate.fastapi import AgentScoreGate, capture_wallet, get_assess_data
+
+@app.post("/purchase", dependencies=[Depends(gate)])
+async def purchase(request: Request, assess = Depends(get_assess_data)):
+    # ... run payment, recover signer wallet from the payload ...
+    await capture_wallet(request, signer, "evm", idempotency_key=payment_intent_id)
+    return {"ok": True}
+```
+
+### Starlette / other ASGI
+
+```python
+from agentscore_gate.middleware import capture_wallet
+
+@app.post("/purchase")
+async def purchase(request: Request):
+    await capture_wallet(request, signer, "evm", idempotency_key=payment_intent_id)
+    return {"ok": True}
+```
+
+### Flask
+
+```python
+from agentscore_gate.flask import capture_wallet
+
+@app.post("/purchase")
+def purchase():
+    capture_wallet(signer, "evm", idempotency_key=payment_intent_id)
+    return {"ok": True}
+```
+
+### Django
+
+```python
+from agentscore_gate.django import capture_wallet
+
+def purchase(request):
+    capture_wallet(request, signer, "evm", idempotency_key=payment_intent_id)
+    return JsonResponse({"ok": True})
+```
+
+### AIOHTTP
+
+```python
+from agentscore_gate.aiohttp import capture_wallet
+
+async def purchase(request):
+    await capture_wallet(request, signer, "evm", idempotency_key=payment_intent_id)
+    return web.json_response({"ok": True})
+```
+
+### Sanic
+
+```python
+from agentscore_gate.sanic import capture_wallet
+
+@app.post("/purchase")
+async def purchase(request):
+    await capture_wallet(request, signer, "evm", idempotency_key=payment_intent_id)
+    return response.json({"ok": True})
+```
+
+Fire-and-forget by design: silently no-ops if the request was wallet-authenticated (no operator_token), the gate didn't run, or the API call fails. `idempotency_key` (payment intent id, tx hash, …) prevents agent retries of the same payment from inflating `transaction_count` server-side.
 
 ## Documentation
 

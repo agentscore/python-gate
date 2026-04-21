@@ -192,3 +192,83 @@ class TestCreateSessionOnMissing:
 
         assert resp.status_code == 200
         assert session_route.call_count == 0
+
+
+CAPTURE_URL = "https://api.agentscore.sh/v1/credentials/wallets"
+
+
+def _capture_app() -> Starlette:
+    """Build a Starlette app whose handler invokes capture_wallet so we can verify the
+    gate's context-stashing works end-to-end."""
+    from starlette.responses import JSONResponse as SResp
+
+    from agentscore_gate.middleware import capture_wallet
+
+    async def purchase(request):
+        await capture_wallet(request, "0xsigner", "evm", idempotency_key="pi_abc")
+        return SResp({"ok": True})
+
+    app = Starlette(routes=[Route("/purchase", purchase, methods=["POST"])])
+    return AgentScoreGate(app, api_key="ask_test_key")
+
+
+class TestCaptureWallet:
+    @respx.mock
+    def test_captures_when_operator_token_present(self):
+        _mock_assess()
+        capture_route = respx.post(CAPTURE_URL).mock(
+            return_value=httpx.Response(200, json={"associated": True, "first_seen": True}),
+        )
+        app = _capture_app()
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.post("/purchase", headers={"X-Operator-Token": "opc_abc"})
+
+        assert resp.status_code == 200
+        assert capture_route.called
+        body = json.loads(capture_route.calls[0].request.content.decode())
+        assert body == {
+            "operator_token": "opc_abc",
+            "wallet_address": "0xsigner",
+            "network": "evm",
+            "idempotency_key": "pi_abc",
+        }
+
+    @respx.mock
+    def test_no_ops_when_wallet_authenticated(self):
+        _mock_assess()
+        capture_route = respx.post(CAPTURE_URL).mock(
+            return_value=httpx.Response(200, json={"associated": True, "first_seen": True}),
+        )
+        app = _capture_app()
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.post("/purchase", headers={"X-Wallet-Address": "0xwallet"})
+
+        assert resp.status_code == 200
+        assert capture_route.call_count == 0
+
+    @respx.mock
+    def test_no_ops_when_gate_did_not_run(self):
+        """Calling capture_wallet on a request that never went through AgentScoreGate
+        (no middleware installed) should silently no-op rather than crash."""
+        import httpx as httpx_client  # avoid shadowing the module-level import
+        from starlette.requests import Request as SReq
+
+        from agentscore_gate.middleware import capture_wallet
+
+        capture_route = respx.post(CAPTURE_URL).mock(
+            return_value=httpx_client.Response(200, json={"associated": True, "first_seen": True}),
+        )
+
+        # Build a Request with a scope that has no state from our gate.
+        scope: dict = {"type": "http", "headers": [], "method": "POST", "path": "/"}
+
+        async def _receive() -> dict:
+            return {"type": "http.request"}
+
+        request = SReq(scope, _receive)
+
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(
+            capture_wallet(request, "0xsigner", "evm"),
+        )
+        assert capture_route.call_count == 0

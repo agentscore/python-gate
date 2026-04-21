@@ -13,10 +13,13 @@ from agentscore_gate.types import (
     ScoreDetail,
 )
 
-# ASGI middleware is the default import.
-# Flask and Django adapters are imported from their submodules:
+# ASGI middleware is the default import (re-exported as CreateSessionOnMissing too).
+# Framework adapters are imported from their own submodules:
+#   from agentscore_gate.fastapi import AgentScoreGate, get_assess_data  # native Depends()
 #   from agentscore_gate.flask import agentscore_gate
 #   from agentscore_gate.django import AgentScoreMiddleware
+#   from agentscore_gate.aiohttp import agentscore_gate_middleware
+#   from agentscore_gate.sanic import agentscore_gate
 try:
     from agentscore_gate.middleware import AgentScoreGate, CreateSessionOnMissing
 except ImportError:

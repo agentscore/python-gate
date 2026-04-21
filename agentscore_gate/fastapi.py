@@ -1,29 +1,34 @@
-"""ASGI middleware for trust-gating requests using AgentScore."""
+"""FastAPI native adapter for trust-gating routes using AgentScore.
+
+The adapter plugs into FastAPI's dependency-injection system. Unlike the generic ASGI
+middleware (which gates every request), this adapter lets you scope gating to specific
+routes via ``dependencies=[Depends(gate)]`` and inject the assess result with
+``Depends(get_assess_data)``.
+"""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 from agentscore_gate.client import GateClient, PaymentRequiredError
 from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason
 from agentscore_gate.types import AgentIdentity, DenialReason, Network
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
-    from starlette.types import ASGIApp, Receive, Scope, Send
+    from collections.abc import Callable
 
 DEFAULT_ADDRESS_HEADER = "x-wallet-address"
 DEFAULT_TOKEN_HEADER = "x-operator-token"
 GATE_STATE_KEY = "__agentscore_gate"
+ASSESS_STATE_KEY = "agentscore"
 
 __all__ = [
     "AgentScoreGate",
     "CreateSessionOnMissing",
     "capture_wallet",
+    "get_assess_data",
 ]
 
 
@@ -40,7 +45,11 @@ def _default_extract_identity(request: Request) -> AgentIdentity | None:
     return None
 
 
-async def _default_on_denied(_request: Request, reason: DenialReason) -> JSONResponse:
+def _default_extract_chain(_request: Request) -> str | None:
+    return None
+
+
+def _build_denial_body(reason: DenialReason) -> dict[str, Any]:
     body: dict[str, Any] = {"error": reason.code}
     if reason.decision is not None:
         body["decision"] = reason.decision
@@ -54,24 +63,33 @@ async def _default_on_denied(_request: Request, reason: DenialReason) -> JSONRes
         body["poll_secret"] = reason.poll_secret
     if reason.agent_instructions:
         body["agent_instructions"] = reason.agent_instructions
-    return JSONResponse(body, status_code=403)
+    return body
 
 
 class AgentScoreGate:
-    """ASGI middleware that gates requests based on AgentScore wallet reputation.
+    """FastAPI dependency that gates a route on AgentScore trust.
 
-    Usage with Starlette / FastAPI::
+    Instantiate once at module scope, then attach to routes via ``Depends(gate)``.
+    Uses FastAPI's dependency-injection system — when the dependency raises
+    :class:`fastapi.HTTPException`, the route body is skipped and the error response
+    is returned to the client.
 
-        app.add_middleware(
-            AgentScoreGate,
-            api_key="ask_...",
-            require_kyc=True,
-        )
+    Usage::
+
+        from fastapi import Depends, FastAPI
+        from agentscore_gate.fastapi import AgentScoreGate, get_assess_data
+
+        app = FastAPI()
+        gate = AgentScoreGate(api_key="ask_...", require_kyc=True, min_age=21)
+
+        @app.post("/purchase", dependencies=[Depends(gate)])
+        async def purchase(assess = Depends(get_assess_data)):
+            # assess is the raw /v1/assess response dict
+            ...
     """
 
     def __init__(
         self,
-        app: ASGIApp,
         *,
         api_key: str,
         require_kyc: bool | None = None,
@@ -86,10 +104,9 @@ class AgentScoreGate:
         user_agent: str | None = None,
         extract_identity: Callable[[Request], AgentIdentity | None] | None = None,
         extract_chain: Callable[[Request], str | None] | None = None,
-        on_denied: Callable[[Request, DenialReason], Awaitable[JSONResponse]] | None = None,
+        on_denied: Callable[[Request, DenialReason], tuple[dict[str, Any], int]] | None = None,
         create_session_on_missing: CreateSessionOnMissing | None = None,
     ) -> None:
-        self.app = app
         self._client = GateClient(
             api_key=api_key,
             require_kyc=require_kyc,
@@ -104,75 +121,76 @@ class AgentScoreGate:
             user_agent=user_agent,
         )
         self._extract_identity = extract_identity or _default_extract_identity
-        self._extract_chain = extract_chain
-        self._on_denied = on_denied or _default_on_denied
+        self._extract_chain = extract_chain or _default_extract_chain
+        self._on_denied = on_denied
         self._create_session_on_missing = create_session_on_missing
 
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """ASGI entry point."""
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
+    def _deny(self, request: Request, reason: DenialReason) -> NoReturn:
+        from fastapi import HTTPException
 
-        request = Request(scope, receive, send)
+        if self._on_denied is not None:
+            body, status = self._on_denied(request, reason)
+        else:
+            body, status = _build_denial_body(reason), 403
+        raise HTTPException(status_code=status, detail=body)
 
+    async def __call__(self, request: Request) -> None:
         identity = self._extract_identity(request)
-        # Stash state for capture_wallet() helper to read after the handler runs.
-        scope.setdefault("state", {})
-        scope["state"][GATE_STATE_KEY] = {
-            "client": self._client,
-            "operator_token": identity.operator_token if identity else None,
-        }
+        # Stash state on request.state so capture_wallet() can look up operator_token + client
+        # after the route handler runs.
+        request.state.__setattr__(
+            GATE_STATE_KEY,
+            {"client": self._client, "operator_token": identity.operator_token if identity else None},
+        )
+
         if not identity:
             if self._client.fail_open:
-                await self.app(scope, receive, send)
                 return
-
-            if self._create_session_on_missing:
+            if self._create_session_on_missing is not None:
                 session_reason = await try_create_session_denial_reason(
                     self._create_session_on_missing, self._client.user_agent,
                 )
                 if session_reason is not None:
-                    response = await self._on_denied(request, session_reason)
-                    await response(scope, receive, send)
-                    return
+                    self._deny(request, session_reason)
+            self._deny(request, DenialReason(code="missing_identity"))
 
-            reason = DenialReason(code="missing_identity")
-            response = await self._on_denied(request, reason)
-            await response(scope, receive, send)
-            return
+        chain_override = self._extract_chain(request)
 
         try:
-            chain_override = self._extract_chain(request) if self._extract_chain else None
             result = await self._client.acheck_identity(identity, chain_override)
-
-            if result.allow:
-                scope["state"] = {**scope.get("state", {}), "agentscore": result.raw}
-                await self.app(scope, receive, send)
-                return
-
-            reason = DenialReason(
-                code="wallet_not_trusted",
-                decision=result.decision,
-                reasons=result.reasons,
-                verify_url=result.verify_url,
-            )
-            response = await self._on_denied(request, reason)
-            await response(scope, receive, send)
         except PaymentRequiredError:
             if self._client.fail_open:
-                await self.app(scope, receive, send)
                 return
-            reason = DenialReason(code="payment_required")
-            response = await self._on_denied(request, reason)
-            await response(scope, receive, send)
+            self._deny(request, DenialReason(code="payment_required"))
         except Exception:
             if self._client.fail_open:
-                await self.app(scope, receive, send)
                 return
-            reason = DenialReason(code="api_error")
-            response = await self._on_denied(request, reason)
-            await response(scope, receive, send)
+            self._deny(request, DenialReason(code="api_error"))
+            return
+
+        if result.allow:
+            setattr(request.state, ASSESS_STATE_KEY, result.raw)
+            return
+
+        self._deny(request, DenialReason(
+            code="wallet_not_trusted",
+            decision=result.decision,
+            reasons=result.reasons,
+            verify_url=result.verify_url,
+        ))
+
+
+def get_assess_data(request: Request) -> dict[str, Any] | None:
+    """FastAPI dependency that returns the raw ``/v1/assess`` response for the current request.
+
+    Returns ``None`` when the gate was bypassed via ``fail_open`` or the route wasn't gated.
+    Usage::
+
+        @app.post("/purchase", dependencies=[Depends(gate)])
+        async def purchase(assess = Depends(get_assess_data)):
+            ...
+    """
+    return getattr(request.state, ASSESS_STATE_KEY, None)
 
 
 async def capture_wallet(
@@ -181,21 +199,20 @@ async def capture_wallet(
     network: Network,
     idempotency_key: str | None = None,
 ) -> None:
-    """Report a wallet that paid under the operator_token the ASGI gate extracted on this request.
+    """Report a wallet that paid under the operator_token the FastAPI gate extracted on this request.
 
     Fire-and-forget: no-ops silently if the gate didn't run, the request was wallet-authenticated
-    (no operator_token to associate), or the API call fails. Use the payment intent id / tx hash
-    as ``idempotency_key`` so agent retries of the same payment don't inflate transaction_count.
+    (no operator_token to associate), or the API call fails.
 
-    Usage (FastAPI)::
+    Usage::
 
-        @app.post("/purchase")
-        async def purchase(request: Request):
+        @app.post("/purchase", dependencies=[Depends(gate)])
+        async def purchase(request: Request, assess = Depends(get_assess_data)):
             # ... run payment, recover signer wallet from the payload ...
             await capture_wallet(request, signer, "evm", idempotency_key=payment_intent_id)
             return {"ok": True}
     """
-    state = request.scope.get("state", {}).get(GATE_STATE_KEY)
+    state = getattr(request.state, GATE_STATE_KEY, None)
     if not state or not state.get("operator_token"):
         return
     await state["client"].acapture_wallet(

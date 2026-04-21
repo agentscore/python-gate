@@ -46,6 +46,81 @@ class TestHeaders:
         assert headers["X-API-Key"] == "ask_my_secret"
 
 
+class TestCaptureWallet:
+    @respx.mock
+    def test_posts_to_wallets_endpoint_with_snake_case_body(self):
+        route = respx.post("https://api.agentscore.sh/v1/credentials/wallets").mock(
+            return_value=httpx.Response(200, json={"associated": True, "first_seen": True}),
+        )
+        client = _make_client()
+        client.capture_wallet("opc_abc", "0xsigner", "evm", idempotency_key="pi_1")
+        assert route.called
+        body = json.loads(route.calls[0].request.content.decode())
+        assert body == {
+            "operator_token": "opc_abc",
+            "wallet_address": "0xsigner",
+            "network": "evm",
+            "idempotency_key": "pi_1",
+        }
+
+    @respx.mock
+    def test_omits_idempotency_key_when_empty_or_none(self):
+        route = respx.post("https://api.agentscore.sh/v1/credentials/wallets").mock(
+            return_value=httpx.Response(200, json={"associated": True, "first_seen": True}),
+        )
+        client = _make_client()
+        client.capture_wallet("opc_abc", "0xsigner", "evm")
+        client.capture_wallet("opc_abc", "0xsigner", "evm", idempotency_key="")
+        for call in route.calls:
+            body = json.loads(call.request.content.decode())
+            assert "idempotency_key" not in body
+
+    @respx.mock
+    def test_swallows_server_errors_silently(self):
+        respx.post("https://api.agentscore.sh/v1/credentials/wallets").mock(
+            return_value=httpx.Response(500, json={"error": {"code": "internal_error"}}),
+        )
+        client = _make_client()
+        # Must not raise even on 5xx
+        client.capture_wallet("opc_abc", "0xsigner", "evm")
+
+    @respx.mock
+    def test_swallows_network_errors_silently(self):
+        respx.post("https://api.agentscore.sh/v1/credentials/wallets").mock(
+            side_effect=httpx.ConnectError("boom"),
+        )
+        client = _make_client()
+        client.capture_wallet("opc_abc", "0xsigner", "evm")
+
+
+class TestCaptureWalletAsync:
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_async_variant_posts_to_wallets_endpoint(self):
+        route = respx.post("https://api.agentscore.sh/v1/credentials/wallets").mock(
+            return_value=httpx.Response(200, json={"associated": True, "first_seen": True}),
+        )
+        client = _make_client()
+        await client.acapture_wallet("opc_abc", "0xsigner", "solana", idempotency_key="tx_hash")
+        assert route.called
+        body = json.loads(route.calls[0].request.content.decode())
+        assert body == {
+            "operator_token": "opc_abc",
+            "wallet_address": "0xsigner",
+            "network": "solana",
+            "idempotency_key": "tx_hash",
+        }
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_async_swallows_errors_silently(self):
+        respx.post("https://api.agentscore.sh/v1/credentials/wallets").mock(
+            side_effect=httpx.ConnectError("boom"),
+        )
+        client = _make_client()
+        await client.acapture_wallet("opc_abc", "0xsigner", "evm")
+
+
 class TestCacheKey:
     def test_lowercases_address(self):
         client = _make_client()

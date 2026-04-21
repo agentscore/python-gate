@@ -7,7 +7,8 @@ from typing import Any
 from django.http import HttpRequest, JsonResponse
 
 from agentscore_gate.client import GateClient, PaymentRequiredError
-from agentscore_gate.types import AgentIdentity, DenialReason
+from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason_sync
+from agentscore_gate.types import AgentIdentity, DenialReason, Network
 
 DEFAULT_ADDRESS_HEADER = "HTTP_X_WALLET_ADDRESS"
 DEFAULT_TOKEN_HEADER = "HTTP_X_OPERATOR_TOKEN"
@@ -45,11 +46,15 @@ class AgentScoreMiddleware:
             fail_open=config.get("fail_open", False),
             cache_seconds=config.get("cache_seconds", 300),
             base_url=config.get("base_url", "https://api.agentscore.sh"),
+            chain=config.get("chain"),
             user_agent=config.get("user_agent"),
         )
         self._extract_identity = config.get("extract_identity", self._default_extract_identity)
         self._extract_chain = config.get("extract_chain", self._default_extract_chain)
         self._on_denied = config.get("on_denied", self._default_on_denied)
+        self._create_session_on_missing: CreateSessionOnMissing | None = config.get(
+            "create_session_on_missing",
+        )
         self.get_response = get_response
 
     @staticmethod
@@ -78,21 +83,39 @@ class AgentScoreMiddleware:
             body["reasons"] = reason.reasons
         if reason.verify_url:
             body["verify_url"] = reason.verify_url
+        if reason.session_id:
+            body["session_id"] = reason.session_id
+        if reason.poll_secret:
+            body["poll_secret"] = reason.poll_secret
+        if reason.agent_instructions:
+            body["agent_instructions"] = reason.agent_instructions
         return JsonResponse(body, status=403)
 
     def __call__(self, request: HttpRequest) -> Any:
         """Process the request."""
         identity = self._extract_identity(request)
 
+        # Stash state so capture_wallet() can read operator_token + client after the view runs.
+        request._agentscore_gate = {  # type: ignore[attr-defined]
+            "client": self._client,
+            "operator_token": identity.operator_token if identity else None,
+        }
+
         if not identity:
             if self._client.fail_open:
                 return self.get_response(request)
+            if self._create_session_on_missing is not None:
+                session_reason = try_create_session_denial_reason_sync(
+                    self._create_session_on_missing, self._client.user_agent,
+                )
+                if session_reason is not None:
+                    return self._on_denied(request, session_reason)
             return self._on_denied(request, DenialReason(code="missing_identity"))
 
-        chain = self._extract_chain(request) or "base"
+        chain_override = self._extract_chain(request)
 
         try:
-            result = self._client.check_identity(identity, chain)
+            result = self._client.check_identity(identity, chain_override)
 
             if result.allow:
                 request.agentscore = result.raw  # type: ignore[attr-defined]
@@ -113,3 +136,32 @@ class AgentScoreMiddleware:
             if self._client.fail_open:
                 return self.get_response(request)
             return self._on_denied(request, DenialReason(code="api_error"))
+
+
+def capture_wallet(
+    request: HttpRequest,
+    wallet_address: str,
+    network: Network,
+    idempotency_key: str | None = None,
+) -> None:
+    """Report a wallet that paid under the operator_token the Django gate extracted on this request.
+
+    Fire-and-forget: no-ops silently if the gate didn't run, the request was wallet-authenticated
+    (no operator_token to associate), or the API call fails.
+
+    Usage::
+
+        def purchase(request):
+            # ... run payment, recover signer wallet from the payload ...
+            capture_wallet(request, signer, "evm", idempotency_key=payment_intent_id)
+            return JsonResponse({"ok": True})
+    """
+    state = getattr(request, "_agentscore_gate", None)
+    if not state or not state.get("operator_token"):
+        return
+    state["client"].capture_wallet(
+        state["operator_token"],
+        wallet_address,
+        network,
+        idempotency_key=idempotency_key,
+    )
