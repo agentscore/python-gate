@@ -20,6 +20,14 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      - uses: useblacksmith/cache@v1
+        with:
+          path: |
+            ~/.cache/uv
+            ~/.local/share/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
+          restore-keys: ${{ runner.os }}-uv-
+
       - name: Install dependencies
         run: uv sync --all-extras
 
