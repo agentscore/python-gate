@@ -45,6 +45,7 @@ class AgentScoreMiddleware:
             fail_open=config.get("fail_open", False),
             cache_seconds=config.get("cache_seconds", 300),
             base_url=config.get("base_url", "https://api.agentscore.sh"),
+            user_agent=config.get("user_agent"),
         )
         self._extract_identity = config.get("extract_identity", self._default_extract_identity)
         self._extract_chain = config.get("extract_chain", self._default_extract_chain)
