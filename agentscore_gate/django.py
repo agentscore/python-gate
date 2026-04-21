@@ -106,7 +106,8 @@ class AgentScoreMiddleware:
                 return self.get_response(request)
             if self._create_session_on_missing is not None:
                 session_reason = try_create_session_denial_reason_sync(
-                    self._create_session_on_missing, self._client.user_agent,
+                    self._create_session_on_missing,
+                    self._client.user_agent,
                 )
                 if session_reason is not None:
                     return self._on_denied(request, session_reason)

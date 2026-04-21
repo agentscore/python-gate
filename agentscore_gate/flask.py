@@ -114,7 +114,8 @@ def agentscore_gate(
             denial_reason = DenialReason(code="missing_identity")
             if create_session_on_missing is not None:
                 session_reason = try_create_session_denial_reason_sync(
-                    create_session_on_missing, client.user_agent,
+                    create_session_on_missing,
+                    client.user_agent,
                 )
                 if session_reason is not None:
                     denial_reason = session_reason

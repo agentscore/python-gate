@@ -75,7 +75,7 @@ async def try_create_session_denial_reason(
         if not resp.is_success:
             return None
         return _session_denial_reason(resp.json())
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
@@ -94,5 +94,5 @@ def try_create_session_denial_reason_sync(
         if not resp.is_success:
             return None
         return _session_denial_reason(resp.json())
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None

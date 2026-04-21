@@ -130,7 +130,8 @@ class AgentScoreGate:
 
             if self._create_session_on_missing:
                 session_reason = await try_create_session_denial_reason(
-                    self._create_session_on_missing, self._client.user_agent,
+                    self._create_session_on_missing,
+                    self._client.user_agent,
                 )
                 if session_reason is not None:
                     response = await self._on_denied(request, session_reason)

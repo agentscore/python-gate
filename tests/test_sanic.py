@@ -198,26 +198,37 @@ class TestCreateSessionOnMissing:
 class TestCaptureWallet:
     def test_captures_when_operator_token_present(self):
         app = _make_app("sanic_capture_op")
-        with patch(
-            "agentscore_gate.sanic.GateClient.acheck_identity",
-            new=AsyncMock(return_value=_allow_result()),
-        ), patch(
-            "agentscore_gate.sanic.GateClient.acapture_wallet", new=AsyncMock(),
-        ) as mock_capture:
+        with (
+            patch(
+                "agentscore_gate.sanic.GateClient.acheck_identity",
+                new=AsyncMock(return_value=_allow_result()),
+            ),
+            patch(
+                "agentscore_gate.sanic.GateClient.acapture_wallet",
+                new=AsyncMock(),
+            ) as mock_capture,
+        ):
             _, resp = app.test_client.post("/purchase", headers={"X-Operator-Token": "opc_abc"})
             assert resp.status == 200
         mock_capture.assert_awaited_once_with(
-            "opc_abc", "0xsigner", "evm", idempotency_key="pi_abc",
+            "opc_abc",
+            "0xsigner",
+            "evm",
+            idempotency_key="pi_abc",
         )
 
     def test_no_ops_when_wallet_authenticated(self):
         app = _make_app("sanic_capture_wallet")
-        with patch(
-            "agentscore_gate.sanic.GateClient.acheck_identity",
-            new=AsyncMock(return_value=_allow_result()),
-        ), patch(
-            "agentscore_gate.sanic.GateClient.acapture_wallet", new=AsyncMock(),
-        ) as mock_capture:
+        with (
+            patch(
+                "agentscore_gate.sanic.GateClient.acheck_identity",
+                new=AsyncMock(return_value=_allow_result()),
+            ),
+            patch(
+                "agentscore_gate.sanic.GateClient.acapture_wallet",
+                new=AsyncMock(),
+            ) as mock_capture,
+        ):
             _, resp = app.test_client.post("/purchase", headers={"X-Wallet-Address": "0xwallet"})
             assert resp.status == 200
         mock_capture.assert_not_awaited()
@@ -232,7 +243,8 @@ class TestCaptureWallet:
             return response.json({"ok": True})
 
         with patch(
-            "agentscore_gate.sanic.GateClient.acapture_wallet", new=AsyncMock(),
+            "agentscore_gate.sanic.GateClient.acapture_wallet",
+            new=AsyncMock(),
         ) as mock_capture:
             _, resp = app.test_client.post("/purchase")
             assert resp.status == 200

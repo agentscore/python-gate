@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from starlette.requests import Request
+from starlette.requests import Request  # noqa: TC002 - runtime import required for FastAPI DI
 
 from agentscore_gate.client import GateClient, PaymentRequiredError
 from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason
@@ -148,7 +148,8 @@ class AgentScoreGate:
                 return
             if self._create_session_on_missing is not None:
                 session_reason = await try_create_session_denial_reason(
-                    self._create_session_on_missing, self._client.user_agent,
+                    self._create_session_on_missing,
+                    self._client.user_agent,
                 )
                 if session_reason is not None:
                     self._deny(request, session_reason)
@@ -172,12 +173,15 @@ class AgentScoreGate:
             setattr(request.state, ASSESS_STATE_KEY, result.raw)
             return
 
-        self._deny(request, DenialReason(
-            code="wallet_not_trusted",
-            decision=result.decision,
-            reasons=result.reasons,
-            verify_url=result.verify_url,
-        ))
+        self._deny(
+            request,
+            DenialReason(
+                code="wallet_not_trusted",
+                decision=result.decision,
+                reasons=result.reasons,
+                verify_url=result.verify_url,
+            ),
+        )
 
 
 def get_assess_data(request: Request) -> dict[str, Any] | None:

@@ -327,19 +327,26 @@ def _make_capture_app() -> Flask:
 class TestFlaskCaptureWallet:
     def test_captures_when_operator_token_present(self) -> None:
         app = _make_capture_app()
-        with patch("agentscore_gate.flask.GateClient.check", return_value=_mock_result()), \
-             patch("agentscore_gate.flask.GateClient.capture_wallet") as mock_capture:
+        with (
+            patch("agentscore_gate.flask.GateClient.check", return_value=_mock_result()),
+            patch("agentscore_gate.flask.GateClient.capture_wallet") as mock_capture,
+        ):
             client = app.test_client()
             resp = client.post("/purchase", headers={"x-operator-token": "opc_abc"})
             assert resp.status_code == 200
             mock_capture.assert_called_once_with(
-                "opc_abc", "0xsigner", "evm", idempotency_key="pi_abc",
+                "opc_abc",
+                "0xsigner",
+                "evm",
+                idempotency_key="pi_abc",
             )
 
     def test_no_ops_when_wallet_authenticated(self) -> None:
         app = _make_capture_app()
-        with patch("agentscore_gate.flask.GateClient.check", return_value=_mock_result()), \
-             patch("agentscore_gate.flask.GateClient.capture_wallet") as mock_capture:
+        with (
+            patch("agentscore_gate.flask.GateClient.check", return_value=_mock_result()),
+            patch("agentscore_gate.flask.GateClient.capture_wallet") as mock_capture,
+        ):
             client = app.test_client()
             resp = client.post("/purchase", headers={"x-wallet-address": "0xabc"})
             assert resp.status_code == 200

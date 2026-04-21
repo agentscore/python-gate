@@ -6,7 +6,6 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import httpx
-import pytest
 import respx
 from fastapi import Depends, FastAPI, Request
 from fastapi.testclient import TestClient
@@ -160,15 +159,17 @@ class TestChainOption:
 class TestCreateSessionOnMissing:
     @respx.mock
     def test_creates_session_and_returns_403_with_session_data(self):
-        respx.post(SESSIONS_URL).mock(return_value=httpx.Response(
-            200,
-            json={
-                "session_id": "sess_abc123",
-                "verify_url": "https://agentscore.sh/verify/sess_abc123",
-                "poll_secret": "ps_secret",
-                "agent_instructions": "please verify",
-            },
-        ))
+        respx.post(SESSIONS_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "session_id": "sess_abc123",
+                    "verify_url": "https://agentscore.sh/verify/sess_abc123",
+                    "poll_secret": "ps_secret",
+                    "agent_instructions": "please verify",
+                },
+            )
+        )
         gate = AgentScoreGate(
             api_key="ask_test",
             create_session_on_missing=CreateSessionOnMissing(api_key="ask_session"),
@@ -239,7 +240,8 @@ class TestCaptureWallet:
 
         client = TestClient(app)
         with patch(
-            "agentscore_gate.client.GateClient.acapture_wallet", new=AsyncMock(),
+            "agentscore_gate.client.GateClient.acapture_wallet",
+            new=AsyncMock(),
         ) as mock_cap:
             resp = client.post("/purchase")
             assert resp.status_code == 200

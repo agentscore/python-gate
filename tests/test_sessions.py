@@ -26,7 +26,8 @@ class TestSyncHelper:
     def test_returns_denial_reason_on_success(self):
         respx.post(SESSIONS_URL).mock(return_value=httpx.Response(200, json=SESSION_RESPONSE))
         reason = try_create_session_denial_reason_sync(
-            CreateSessionOnMissing(api_key="ask_test"), user_agent="agentscore-gate/1.0",
+            CreateSessionOnMissing(api_key="ask_test"),
+            user_agent="agentscore-gate/1.0",
         )
         assert reason is not None
         assert reason.code == "identity_verification_required"
@@ -39,7 +40,8 @@ class TestSyncHelper:
     def test_returns_none_on_server_error(self):
         respx.post(SESSIONS_URL).mock(return_value=httpx.Response(500, text="oops"))
         reason = try_create_session_denial_reason_sync(
-            CreateSessionOnMissing(api_key="ask_test"), user_agent="agentscore-gate/1.0",
+            CreateSessionOnMissing(api_key="ask_test"),
+            user_agent="agentscore-gate/1.0",
         )
         assert reason is None
 
@@ -47,7 +49,8 @@ class TestSyncHelper:
     def test_returns_none_on_network_error(self):
         respx.post(SESSIONS_URL).mock(side_effect=httpx.ConnectError("boom"))
         reason = try_create_session_denial_reason_sync(
-            CreateSessionOnMissing(api_key="ask_test"), user_agent="agentscore-gate/1.0",
+            CreateSessionOnMissing(api_key="ask_test"),
+            user_agent="agentscore-gate/1.0",
         )
         assert reason is None
 
@@ -63,6 +66,7 @@ class TestSyncHelper:
             user_agent="agentscore-gate/1.0",
         )
         import json
+
         body = json.loads(route.calls[0].request.content)
         assert body["context"] == "purchase_flow"
         assert body["product_name"] == "Martin Estate"
@@ -75,6 +79,7 @@ class TestSyncHelper:
             user_agent="agentscore-gate/1.0",
         )
         import json
+
         body = json.loads(route.calls[0].request.content)
         assert "context" not in body
         assert "product_name" not in body
@@ -107,7 +112,8 @@ class TestAsyncHelper:
     async def test_returns_denial_reason_on_success(self):
         respx.post(SESSIONS_URL).mock(return_value=httpx.Response(200, json=SESSION_RESPONSE))
         reason = await try_create_session_denial_reason(
-            CreateSessionOnMissing(api_key="ask_test"), user_agent="agentscore-gate/1.0",
+            CreateSessionOnMissing(api_key="ask_test"),
+            user_agent="agentscore-gate/1.0",
         )
         assert reason is not None
         assert reason.session_id == "sess_abc"
@@ -117,6 +123,7 @@ class TestAsyncHelper:
     async def test_returns_none_on_network_error(self):
         respx.post(SESSIONS_URL).mock(side_effect=httpx.ConnectError("boom"))
         reason = await try_create_session_denial_reason(
-            CreateSessionOnMissing(api_key="ask_test"), user_agent="agentscore-gate/1.0",
+            CreateSessionOnMissing(api_key="ask_test"),
+            user_agent="agentscore-gate/1.0",
         )
         assert reason is None

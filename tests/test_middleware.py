@@ -268,6 +268,7 @@ class TestCaptureWallet:
         request = SReq(scope, _receive)
 
         import asyncio
+
         asyncio.get_event_loop().run_until_complete(
             capture_wallet(request, "0xsigner", "evm"),
         )

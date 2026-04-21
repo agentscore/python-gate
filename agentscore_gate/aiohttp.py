@@ -123,7 +123,8 @@ def agentscore_gate_middleware(
                 return await handler(request)
             if create_session_on_missing is not None:
                 session_reason = await try_create_session_denial_reason(
-                    create_session_on_missing, client.user_agent,
+                    create_session_on_missing,
+                    client.user_agent,
                 )
                 if session_reason is not None:
                     body, status = _on_denied(request, session_reason)

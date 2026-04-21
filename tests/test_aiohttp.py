@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -14,9 +13,6 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from agentscore_gate.aiohttp import agentscore_gate_middleware, capture_wallet
 from agentscore_gate.sessions import CreateSessionOnMissing
-
-if TYPE_CHECKING:
-    pass
 
 ASSESS_URL = "https://api.agentscore.sh/v1/assess"
 SESSIONS_URL = "https://api.agentscore.sh/v1/sessions"
@@ -185,15 +181,17 @@ class TestCreateSessionOnMissing:
     @pytest.mark.asyncio
     @respx.mock
     async def test_creates_session_and_returns_403_with_session_data(self):
-        respx.post(SESSIONS_URL).mock(return_value=httpx.Response(
-            200,
-            json={
-                "session_id": "sess_abc123",
-                "verify_url": "https://agentscore.sh/verify/sess_abc123",
-                "poll_secret": "ps_secret",
-                "agent_instructions": "please verify",
-            },
-        ))
+        respx.post(SESSIONS_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "session_id": "sess_abc123",
+                    "verify_url": "https://agentscore.sh/verify/sess_abc123",
+                    "poll_secret": "ps_secret",
+                    "agent_instructions": "please verify",
+                },
+            )
+        )
 
         app = _make_app(create_session_on_missing=CreateSessionOnMissing(api_key="ask_session"))
         client = await _client(app)

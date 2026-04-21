@@ -338,12 +338,17 @@ class TestDjangoCaptureWallet:
 
         mw = self._make_middleware()
         request = self.factory.post("/purchase", HTTP_X_OPERATOR_TOKEN="opc_django_cap")
-        with patch("agentscore_gate.django.GateClient.check", return_value=_mock_result()), \
-             patch("agentscore_gate.django.GateClient.capture_wallet") as mock_capture:
+        with (
+            patch("agentscore_gate.django.GateClient.check", return_value=_mock_result()),
+            patch("agentscore_gate.django.GateClient.capture_wallet") as mock_capture,
+        ):
             mw(request)
             capture_wallet(request, "0xsigner", "evm", idempotency_key="pi_abc")
             mock_capture.assert_called_once_with(
-                "opc_django_cap", "0xsigner", "evm", idempotency_key="pi_abc",
+                "opc_django_cap",
+                "0xsigner",
+                "evm",
+                idempotency_key="pi_abc",
             )
 
     def test_no_ops_when_wallet_authenticated(self) -> None:
@@ -351,8 +356,10 @@ class TestDjangoCaptureWallet:
 
         mw = self._make_middleware()
         request = self.factory.post("/purchase", HTTP_X_WALLET_ADDRESS="0xabc")
-        with patch("agentscore_gate.django.GateClient.check", return_value=_mock_result()), \
-             patch("agentscore_gate.django.GateClient.capture_wallet") as mock_capture:
+        with (
+            patch("agentscore_gate.django.GateClient.check", return_value=_mock_result()),
+            patch("agentscore_gate.django.GateClient.capture_wallet") as mock_capture,
+        ):
             mw(request)
             capture_wallet(request, "0xsigner", "evm")
             mock_capture.assert_not_called()
