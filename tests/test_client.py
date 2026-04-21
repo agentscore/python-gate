@@ -30,14 +30,14 @@ class TestHeaders:
 
         client = _make_client()
         headers = client._headers()
-        assert headers["User-Agent"] == f"agentscore-gate-py/{version('agentscore-gate')}"
+        assert headers["User-Agent"] == f"agentscore-gate/{version('agentscore-gate')}"
 
     def test_custom_user_agent_prepended_to_default(self):
         from importlib.metadata import version
 
         client = _make_client(user_agent="my-app/1.2.3")
         headers = client._headers()
-        expected = f"my-app/1.2.3 (agentscore-gate-py/{version('agentscore-gate')})"
+        expected = f"my-app/1.2.3 (agentscore-gate/{version('agentscore-gate')})"
         assert headers["User-Agent"] == expected
 
     def test_includes_api_key_header(self):

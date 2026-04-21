@@ -48,7 +48,7 @@ class GateClient:
         self._api_key = api_key
         self._base_url = base_url
         self._chain = chain
-        default_ua = f"agentscore-gate-py/{_pkg_version('agentscore-gate')}"
+        default_ua = f"agentscore-gate/{_pkg_version('agentscore-gate')}"
         self.user_agent = f"{user_agent} ({default_ua})" if user_agent else default_ua
         self._cache: TTLCache[AssessResult] = TTLCache(cache_seconds)
 
