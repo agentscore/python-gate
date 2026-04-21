@@ -56,6 +56,7 @@ def agentscore_gate(
     fail_open: bool = False,
     cache_seconds: int = 300,
     base_url: str = "https://api.agentscore.sh",
+    user_agent: str | None = None,
     extract_identity: Callable[[Request], AgentIdentity | None] | None = None,
     extract_chain: Callable[[Request], str | None] | None = None,
     on_denied: Callable[[Request, DenialReason], tuple[dict[str, Any], int]] | None = None,
@@ -83,6 +84,7 @@ def agentscore_gate(
         fail_open=fail_open,
         cache_seconds=cache_seconds,
         base_url=base_url,
+        user_agent=user_agent,
     )
     _resolve_identity = extract_identity or _default_extract_identity
     _extract_chain = extract_chain or _default_extract_chain

@@ -56,6 +56,7 @@ AGENTSCORE_GATE = {
 | `allowed_jurisdictions` | `list[str]` | `None` | ISO country codes to allow |
 | `fail_open` | `bool` | `False` | Allow requests when API unreachable |
 | `cache_seconds` | `int` | `300` | Cache TTL |
+| `user_agent` | `str` | `None` | Prepended to the default `User-Agent` as `"{user_agent} (agentscore-gate-py/{version})"`. Use to attribute API calls to your app. |
 | `extract_identity` | `callable` | Reads headers | Custom identity extractor |
 | `create_session_on_missing` | `CreateSessionOnMissing` | `None` | Auto-create session (ASGI only) |
 

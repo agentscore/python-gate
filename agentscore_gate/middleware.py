@@ -87,6 +87,7 @@ class AgentScoreGate:
         cache_seconds: int = 300,
         base_url: str = "https://api.agentscore.sh",
         chain: str | None = None,
+        user_agent: str | None = None,
         extract_identity: Callable[[Request], AgentIdentity | None] | None = None,
         on_denied: Callable[[Request, DenialReason], Awaitable[JSONResponse]] | None = None,
         create_session_on_missing: CreateSessionOnMissing | None = None,
@@ -103,6 +104,7 @@ class AgentScoreGate:
             cache_seconds=cache_seconds,
             base_url=base_url,
             chain=chain,
+            user_agent=user_agent,
         )
         self._extract_identity = extract_identity or _default_extract_identity
         self._on_denied = on_denied or _default_on_denied
@@ -138,6 +140,7 @@ class AgentScoreGate:
                                 "X-API-Key": cfg.api_key,
                                 "Content-Type": "application/json",
                                 "Accept": "application/json",
+                                "User-Agent": self._client.user_agent,
                             },
                             json=session_body,
                         )

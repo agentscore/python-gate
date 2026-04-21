@@ -38,6 +38,7 @@ class GateClient:
         cache_seconds: int = DEFAULT_CACHE_SECONDS,
         base_url: str = DEFAULT_BASE_URL,
         chain: str | None = None,
+        user_agent: str | None = None,
     ) -> None:
         if not api_key:
             msg = "AgentScore API key is required. Get one at https://agentscore.sh/sign-up"
@@ -47,6 +48,8 @@ class GateClient:
         self._api_key = api_key
         self._base_url = base_url
         self._chain = chain
+        default_ua = f"agentscore-gate-py/{_pkg_version('agentscore-gate')}"
+        self.user_agent = f"{user_agent} ({default_ua})" if user_agent else default_ua
         self._cache: TTLCache[AssessResult] = TTLCache(cache_seconds)
 
         self._policy: dict[str, Any] = {}
@@ -89,7 +92,7 @@ class GateClient:
             "X-API-Key": self._api_key,
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": f"agentscore-gate-py/{_pkg_version('agentscore-gate')}",
+            "User-Agent": self.user_agent,
         }
 
     def _parse_response(self, resp: httpx.Response) -> AssessResult:
