@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -10,6 +11,8 @@ from typing import Any
 import httpx
 
 from agentscore_gate.types import DenialReason
+
+logger = logging.getLogger("agentscore_gate")
 
 # A hook can be sync or async. We call it, then await the result if it's a coroutine.
 _Hookable = Any | Awaitable[Any]
@@ -133,7 +136,7 @@ async def try_create_session_denial_reason(
                 dynamic = await _maybe_await(cfg.get_session_options(ctx))
                 body = _apply_dynamic_options(body, dynamic)
             except Exception as err:
-                print(f"[gate] get_session_options hook failed: {err}")
+                logger.warning("get_session_options hook failed: %s", err)
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
@@ -153,7 +156,7 @@ async def try_create_session_denial_reason(
                 if isinstance(result, dict):
                     extra = result
             except Exception as err:
-                print(f"[gate] on_before_session hook failed: {err}")
+                logger.warning("on_before_session hook failed: %s", err)
 
         return _session_denial_reason(data, extra)
     except Exception:
@@ -176,12 +179,12 @@ def try_create_session_denial_reason_sync(
             try:
                 dynamic = cfg.get_session_options(ctx)
                 if inspect.iscoroutine(dynamic):
-                    print("[gate] get_session_options returned a coroutine in a sync adapter — skipping")
+                    logger.warning("get_session_options returned a coroutine in a sync adapter — skipping")
                     dynamic.close()
                 else:
                     body = _apply_dynamic_options(body, dynamic)
             except Exception as err:
-                print(f"[gate] get_session_options hook failed: {err}")
+                logger.warning("get_session_options hook failed: %s", err)
 
         with httpx.Client(timeout=10.0) as client:
             resp = client.post(
@@ -199,12 +202,12 @@ def try_create_session_denial_reason_sync(
             try:
                 result = cfg.on_before_session(ctx, _session_metadata(data))
                 if inspect.iscoroutine(result):
-                    print("[gate] on_before_session returned a coroutine in a sync adapter — skipping")
+                    logger.warning("on_before_session returned a coroutine in a sync adapter — skipping")
                     result.close()
                 elif isinstance(result, dict):
                     extra = result
             except Exception as err:
-                print(f"[gate] on_before_session hook failed: {err}")
+                logger.warning("on_before_session hook failed: %s", err)
 
         return _session_denial_reason(data, extra)
     except Exception:
