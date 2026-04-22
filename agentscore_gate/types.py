@@ -39,6 +39,7 @@ class DenialReason:
     verify_url: str | None = None
     session_id: str | None = None
     poll_secret: str | None = None
+    poll_url: str | None = None
     agent_instructions: str | None = None
     # Extra fields returned from ``CreateSessionOnMissing.on_before_session`` hook.
     # Merged into the default 403 body; custom ``on_denied`` handlers can spread

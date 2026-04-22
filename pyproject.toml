@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentscore-gate"
-version = "1.7.0"
+version = "1.8.0"
 description = "Trust-gating middleware for Python web frameworks using AgentScore"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = ["agentscore", "middleware", "gate", "trust", "reputation", "x402", "erc-8004", "agent", "wallet", "blockchain", "ai-agent", "fastapi", "starlette", "flask", "django", "aiohttp", "sanic", "agentic-payments"]
 dependencies = [
     "httpx>=0.25.0,<1.0.0",
@@ -41,6 +41,7 @@ Issues = "https://github.com/agentscore/python-gate/issues"
 [dependency-groups]
 dev = [
     "ruff>=0.11.0",
+    "ty>=0.0.32",
     "vulture>=2.15",
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
@@ -56,6 +57,9 @@ dev = [
     "pytest-cov>=6.0",
     "python-dotenv>=1.2.2",
 ]
+
+[tool.ty.src]
+include = ["agentscore_gate"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

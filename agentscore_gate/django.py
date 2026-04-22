@@ -87,6 +87,8 @@ class AgentScoreMiddleware:
             body["session_id"] = reason.session_id
         if reason.poll_secret:
             body["poll_secret"] = reason.poll_secret
+        if reason.poll_url:
+            body["poll_url"] = reason.poll_url
         if reason.agent_instructions:
             body["agent_instructions"] = reason.agent_instructions
         if reason.extra:
@@ -98,10 +100,11 @@ class AgentScoreMiddleware:
         identity = self._extract_identity(request)
 
         # Stash state so capture_wallet() can read operator_token + client after the view runs.
-        request._agentscore_gate = {  # type: ignore[attr-defined]
-            "client": self._client,
-            "operator_token": identity.operator_token if identity else None,
-        }
+        setattr(  # noqa: B010 — dynamic attribute attach on HttpRequest
+            request,
+            "_agentscore_gate",
+            {"client": self._client, "operator_token": identity.operator_token if identity else None},
+        )
 
         if not identity:
             if self._client.fail_open:
@@ -122,7 +125,7 @@ class AgentScoreMiddleware:
             result = self._client.check_identity(identity, chain_override)
 
             if result.allow:
-                request.agentscore = result.raw  # type: ignore[attr-defined]
+                setattr(request, "agentscore", result.raw)  # noqa: B010 — dynamic attribute attach on HttpRequest
                 return self.get_response(request)
 
             reason = DenialReason(

@@ -46,6 +46,8 @@ def _default_on_denied(_request: Request, reason: DenialReason) -> tuple[dict[st
         body["session_id"] = reason.session_id
     if reason.poll_secret:
         body["poll_secret"] = reason.poll_secret
+    if reason.poll_url:
+        body["poll_url"] = reason.poll_url
     if reason.agent_instructions:
         body["agent_instructions"] = reason.agent_instructions
     if reason.extra:
@@ -103,7 +105,7 @@ def agentscore_gate(
     _on_denied = on_denied or _default_on_denied
 
     @app.before_request
-    def _agentscore_check() -> Response | None:
+    def _agentscore_check() -> Response | tuple[Response, int] | None:
         identity = _resolve_identity(flask_request)
         # Stash state so capture_wallet() can look up operator_token + client after the handler.
         g._agentscore_gate = {

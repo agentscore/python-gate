@@ -53,6 +53,8 @@ def _default_on_denied(_request: Request, reason: DenialReason) -> tuple[dict[st
         body["session_id"] = reason.session_id
     if reason.poll_secret:
         body["poll_secret"] = reason.poll_secret
+    if reason.poll_url:
+        body["poll_url"] = reason.poll_url
     if reason.agent_instructions:
         body["agent_instructions"] = reason.agent_instructions
     if reason.extra:

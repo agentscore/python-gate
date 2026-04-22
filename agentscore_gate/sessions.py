@@ -6,7 +6,7 @@ import inspect
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -105,6 +105,7 @@ def _session_denial_reason(
         verify_url=data.get("verify_url"),
         session_id=data.get("session_id"),
         poll_secret=data.get("poll_secret"),
+        poll_url=data.get("poll_url"),
         agent_instructions=data.get("agent_instructions"),
         extra=extra,
     )
@@ -115,6 +116,7 @@ def _session_metadata(data: dict[str, Any]) -> dict[str, Any]:
         "session_id": data.get("session_id"),
         "verify_url": data.get("verify_url"),
         "poll_secret": data.get("poll_secret"),
+        "poll_url": data.get("poll_url"),
         "expires_at": data.get("expires_at"),
     }
 
@@ -200,12 +202,12 @@ def try_create_session_denial_reason_sync(
         extra: dict[str, Any] | None = None
         if cfg.on_before_session is not None and ctx is not None:
             try:
-                result = cfg.on_before_session(ctx, _session_metadata(data))
-                if inspect.iscoroutine(result):
+                hook_result: Any = cfg.on_before_session(ctx, _session_metadata(data))
+                if inspect.iscoroutine(hook_result):
                     logger.warning("on_before_session returned a coroutine in a sync adapter — skipping")
-                    result.close()
-                elif isinstance(result, dict):
-                    extra = result
+                    hook_result.close()
+                elif isinstance(hook_result, dict):
+                    extra = cast("dict[str, Any]", hook_result)
             except Exception as err:
                 logger.warning("on_before_session hook failed: %s", err)
 
