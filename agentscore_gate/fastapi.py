@@ -61,6 +61,8 @@ def _build_denial_body(reason: DenialReason) -> dict[str, Any]:
         body["session_id"] = reason.session_id
     if reason.poll_secret:
         body["poll_secret"] = reason.poll_secret
+    if reason.poll_url:
+        body["poll_url"] = reason.poll_url
     if reason.agent_instructions:
         body["agent_instructions"] = reason.agent_instructions
     if reason.extra:

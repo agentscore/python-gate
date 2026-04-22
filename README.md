@@ -93,7 +93,7 @@ agentscore_gate(app, api_key="as_live_...", require_kyc=True)
 | `cache_seconds` | `int` | `300` | Cache TTL |
 | `user_agent` | `str` | `None` | Prepended to the default `User-Agent` as `"{user_agent} (agentscore-gate/{version})"`. Use to attribute API calls to your app. |
 | `extract_identity` | `callable` | Reads headers | Custom identity extractor |
-| `create_session_on_missing` | `CreateSessionOnMissing` | `None` | Auto-create session (ASGI only) |
+| `create_session_on_missing` | `CreateSessionOnMissing` | `None` | Auto-create verification session when no identity is found (all adapters) |
 
 ## Identity
 
@@ -124,7 +124,7 @@ app.add_middleware(
     api_key="as_live_...",
     create_session_on_missing=CreateSessionOnMissing(api_key="as_live_..."),
 )
-# 403 includes: verify_url, session_id, poll_secret, agent_instructions
+# 403 includes: verify_url, session_id, poll_secret, poll_url, agent_instructions
 ```
 
 ### Per-request hooks
