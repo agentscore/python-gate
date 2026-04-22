@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from importlib.metadata import version as _pkg_version
 from typing import Any
@@ -12,6 +13,7 @@ from agentscore_gate.cache import TTLCache
 from agentscore_gate.types import (
     AgentIdentity,
     AssessResult,
+    Network,
     OperatorVerification,
 )
 
@@ -176,6 +178,56 @@ class GateClient:
     async def acheck_identity(self, identity: AgentIdentity, chain: str | None = None) -> AssessResult:
         """Async convenience method to check using an AgentIdentity object."""
         return await self.acheck(address=identity.address, chain=chain, operator_token=identity.operator_token)
+
+    def capture_wallet(
+        self,
+        operator_token: str,
+        wallet_address: str,
+        network: Network,
+        idempotency_key: str | None = None,
+    ) -> None:
+        """Report a wallet seen paying under an operator credential (TEC-189).
+
+        Fire-and-forget: silently swallows non-fatal errors. ``idempotency_key`` (payment intent
+        id, tx hash, …) lets the server dedupe agent retries of the same logical payment.
+        """
+        body: dict[str, Any] = {
+            "operator_token": operator_token,
+            "wallet_address": wallet_address,
+            "network": network,
+        }
+        if idempotency_key:
+            body["idempotency_key"] = idempotency_key
+        # Silent — capture is fire-and-forget
+        with contextlib.suppress(Exception):
+            self._sync_client.post(
+                f"{self._base_url}/v1/credentials/wallets",
+                headers=self._headers(),
+                content=json.dumps(body),
+            )
+
+    async def acapture_wallet(
+        self,
+        operator_token: str,
+        wallet_address: str,
+        network: Network,
+        idempotency_key: str | None = None,
+    ) -> None:
+        """Async variant of :meth:`capture_wallet`."""
+        body: dict[str, Any] = {
+            "operator_token": operator_token,
+            "wallet_address": wallet_address,
+            "network": network,
+        }
+        if idempotency_key:
+            body["idempotency_key"] = idempotency_key
+        # Silent — capture is fire-and-forget
+        with contextlib.suppress(Exception):
+            await self._async_client.post(
+                f"{self._base_url}/v1/credentials/wallets",
+                headers=self._headers(),
+                content=json.dumps(body),
+            )
 
 
 class PaymentRequiredError(Exception):

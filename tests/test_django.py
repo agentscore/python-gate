@@ -213,6 +213,64 @@ class TestDjangoMiddleware:
             assert data["error"] == "wallet_not_trusted"
 
 
+class TestDjangoCreateSessionOnMissing:
+    """Django middleware's create_session_on_missing support."""
+
+    factory = RequestFactory()
+
+    def _make_middleware(self, **config_overrides: object) -> AgentScoreMiddleware:
+        original = settings.AGENTSCORE_GATE.copy()
+        settings.AGENTSCORE_GATE = {**original, **config_overrides}
+        try:
+            return AgentScoreMiddleware(_ok_response)
+        finally:
+            settings.AGENTSCORE_GATE = original
+
+    def test_creates_session_and_returns_403_with_session_data(self) -> None:
+        from agentscore_gate.sessions import CreateSessionOnMissing
+        from agentscore_gate.types import DenialReason
+
+        session_reason = DenialReason(
+            code="identity_verification_required",
+            verify_url="https://agentscore.sh/verify/sess_abc",
+            session_id="sess_abc",
+            poll_secret="ps_secret",
+            agent_instructions="please verify",
+        )
+        mw = self._make_middleware(
+            create_session_on_missing=CreateSessionOnMissing(api_key="ask_session"),
+        )
+        request = self.factory.get("/")
+        with patch(
+            "agentscore_gate.django.try_create_session_denial_reason_sync",
+            return_value=session_reason,
+        ):
+            resp = mw(request)
+        assert resp.status_code == 403
+        data = json.loads(resp.content)
+        assert data["error"] == "identity_verification_required"
+        assert data["session_id"] == "sess_abc"
+        assert data["verify_url"] == "https://agentscore.sh/verify/sess_abc"
+        assert data["poll_secret"] == "ps_secret"
+        assert data["agent_instructions"] == "please verify"
+
+    def test_falls_back_to_missing_identity_on_session_helper_failure(self) -> None:
+        from agentscore_gate.sessions import CreateSessionOnMissing
+
+        mw = self._make_middleware(
+            create_session_on_missing=CreateSessionOnMissing(api_key="ask_session"),
+        )
+        request = self.factory.get("/")
+        with patch(
+            "agentscore_gate.django.try_create_session_denial_reason_sync",
+            return_value=None,
+        ):
+            resp = mw(request)
+        assert resp.status_code == 403
+        data = json.loads(resp.content)
+        assert data["error"] == "missing_identity"
+
+
 class TestDjangoIdentityModel:
     """Django middleware identity model tests."""
 
@@ -267,3 +325,126 @@ class TestDjangoIdentityModel:
             call_args = mock_check.call_args
             identity = call_args[0][0]
             assert identity.operator_token == "opc_django_test"
+
+
+class TestDjangoCaptureWallet:
+    factory = RequestFactory()
+
+    def _make_middleware(self) -> AgentScoreMiddleware:
+        return AgentScoreMiddleware(_ok_response)
+
+    def test_captures_when_operator_token_present(self) -> None:
+        from agentscore_gate.django import capture_wallet
+
+        mw = self._make_middleware()
+        request = self.factory.post("/purchase", HTTP_X_OPERATOR_TOKEN="opc_django_cap")
+        with (
+            patch("agentscore_gate.django.GateClient.check", return_value=_mock_result()),
+            patch("agentscore_gate.django.GateClient.capture_wallet") as mock_capture,
+        ):
+            mw(request)
+            capture_wallet(request, "0xsigner", "evm", idempotency_key="pi_abc")
+            mock_capture.assert_called_once_with(
+                "opc_django_cap",
+                "0xsigner",
+                "evm",
+                idempotency_key="pi_abc",
+            )
+
+    def test_no_ops_when_wallet_authenticated(self) -> None:
+        from agentscore_gate.django import capture_wallet
+
+        mw = self._make_middleware()
+        request = self.factory.post("/purchase", HTTP_X_WALLET_ADDRESS="0xabc")
+        with (
+            patch("agentscore_gate.django.GateClient.check", return_value=_mock_result()),
+            patch("agentscore_gate.django.GateClient.capture_wallet") as mock_capture,
+        ):
+            mw(request)
+            capture_wallet(request, "0xsigner", "evm")
+            mock_capture.assert_not_called()
+
+    def test_no_ops_when_gate_did_not_run(self) -> None:
+        from agentscore_gate.django import capture_wallet
+
+        # A handler calling capture_wallet without the gate middleware ever running.
+        request = self.factory.post("/purchase")
+        with patch("agentscore_gate.django.GateClient.capture_wallet") as mock_capture:
+            capture_wallet(request, "0xsigner", "evm")
+            mock_capture.assert_not_called()
+
+
+class TestDjangoUserAgent:
+    """Django middleware user_agent + default User-Agent header coverage."""
+
+    factory = RequestFactory()
+
+    def _make_middleware(self, **config_overrides: object) -> AgentScoreMiddleware:
+        original = settings.AGENTSCORE_GATE.copy()
+        settings.AGENTSCORE_GATE = {**original, **config_overrides}
+        try:
+            return AgentScoreMiddleware(_ok_response)
+        finally:
+            settings.AGENTSCORE_GATE = original
+
+    def test_default_user_agent_format(self) -> None:
+        import httpx
+        import respx
+
+        mw = self._make_middleware()
+
+        with respx.mock:
+            route = respx.post("https://api.agentscore.sh/v1/assess").mock(
+                return_value=httpx.Response(200, json={"decision": "allow", "decision_reasons": []}),
+            )
+            request = self.factory.get("/", HTTP_X_WALLET_ADDRESS="0xabc")
+            mw(request)
+            assert route.called
+            ua = route.calls[0].request.headers["User-Agent"]
+            assert ua.startswith("agentscore-gate/")
+
+    def test_custom_user_agent_prepended(self) -> None:
+        import httpx
+        import respx
+
+        mw = self._make_middleware(user_agent="myapp/2.0")
+
+        with respx.mock:
+            route = respx.post("https://api.agentscore.sh/v1/assess").mock(
+                return_value=httpx.Response(200, json={"decision": "allow", "decision_reasons": []}),
+            )
+            request = self.factory.get("/", HTTP_X_WALLET_ADDRESS="0xabc")
+            mw(request)
+            ua = route.calls[0].request.headers["User-Agent"]
+            assert ua.startswith("myapp/2.0 (agentscore-gate/")
+
+
+class TestDjangoChainOption:
+    """Django middleware chain= constructor option forwarding."""
+
+    factory = RequestFactory()
+
+    def _make_middleware(self, **config_overrides: object) -> AgentScoreMiddleware:
+        original = settings.AGENTSCORE_GATE.copy()
+        settings.AGENTSCORE_GATE = {**original, **config_overrides}
+        try:
+            return AgentScoreMiddleware(_ok_response)
+        finally:
+            settings.AGENTSCORE_GATE = original
+
+    def test_constructor_chain_stored_and_forwarded(self) -> None:
+        import json
+
+        import httpx
+        import respx
+
+        mw = self._make_middleware(chain="solana")
+
+        with respx.mock:
+            route = respx.post("https://api.agentscore.sh/v1/assess").mock(
+                return_value=httpx.Response(200, json={"decision": "allow", "decision_reasons": []}),
+            )
+            request = self.factory.get("/", HTTP_X_WALLET_ADDRESS="0xabc")
+            mw(request)
+            body = json.loads(route.calls[0].request.content)
+            assert body["chain"] == "solana"

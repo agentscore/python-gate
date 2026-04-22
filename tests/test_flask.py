@@ -204,6 +204,50 @@ class TestFlaskGate:
             assert data["error"] == "wallet_not_trusted"
 
 
+class TestFlaskCreateSessionOnMissing:
+    """Flask adapter's create_session_on_missing support."""
+
+    def test_creates_session_and_returns_403_with_session_data(self) -> None:
+        from agentscore_gate.sessions import CreateSessionOnMissing
+        from agentscore_gate.types import DenialReason
+
+        app = _make_app(create_session_on_missing=CreateSessionOnMissing(api_key="ask_session"))
+        session_reason = DenialReason(
+            code="identity_verification_required",
+            verify_url="https://agentscore.sh/verify/sess_abc",
+            session_id="sess_abc",
+            poll_secret="ps_secret",
+            agent_instructions="please verify",
+        )
+        with patch(
+            "agentscore_gate.flask.try_create_session_denial_reason_sync",
+            return_value=session_reason,
+        ):
+            client = app.test_client()
+            resp = client.get("/")
+            assert resp.status_code == 403
+            data = resp.get_json()
+            assert data["error"] == "identity_verification_required"
+            assert data["session_id"] == "sess_abc"
+            assert data["verify_url"] == "https://agentscore.sh/verify/sess_abc"
+            assert data["poll_secret"] == "ps_secret"
+            assert data["agent_instructions"] == "please verify"
+
+    def test_falls_back_to_missing_identity_on_session_helper_failure(self) -> None:
+        from agentscore_gate.sessions import CreateSessionOnMissing
+
+        app = _make_app(create_session_on_missing=CreateSessionOnMissing(api_key="ask_session"))
+        with patch(
+            "agentscore_gate.flask.try_create_session_denial_reason_sync",
+            return_value=None,
+        ):
+            client = app.test_client()
+            resp = client.get("/")
+            assert resp.status_code == 403
+            data = resp.get_json()
+            assert data["error"] == "missing_identity"
+
+
 class TestFlaskIdentityModel:
     """Flask adapter identity model tests."""
 
@@ -261,3 +305,122 @@ class TestFlaskIdentityModel:
             call_args = mock_check.call_args
             identity = call_args[0][0]
             assert identity.operator_token == "opc_flask_test"
+
+
+def _make_capture_app() -> Flask:
+    """Flask app whose handler calls capture_wallet so we can verify gate-state stash."""
+    from agentscore_gate.flask import agentscore_gate as _install_gate
+    from agentscore_gate.flask import capture_wallet as _capture
+
+    app = Flask(__name__)
+    app.config["TESTING"] = True
+    _install_gate(app, api_key="test-key")
+
+    @app.route("/purchase", methods=["POST"])
+    def purchase():
+        _capture("0xsigner", "evm", idempotency_key="pi_abc")
+        return {"ok": True}
+
+    return app
+
+
+class TestFlaskCaptureWallet:
+    def test_captures_when_operator_token_present(self) -> None:
+        app = _make_capture_app()
+        with (
+            patch("agentscore_gate.flask.GateClient.check", return_value=_mock_result()),
+            patch("agentscore_gate.flask.GateClient.capture_wallet") as mock_capture,
+        ):
+            client = app.test_client()
+            resp = client.post("/purchase", headers={"x-operator-token": "opc_abc"})
+            assert resp.status_code == 200
+            mock_capture.assert_called_once_with(
+                "opc_abc",
+                "0xsigner",
+                "evm",
+                idempotency_key="pi_abc",
+            )
+
+    def test_no_ops_when_wallet_authenticated(self) -> None:
+        app = _make_capture_app()
+        with (
+            patch("agentscore_gate.flask.GateClient.check", return_value=_mock_result()),
+            patch("agentscore_gate.flask.GateClient.capture_wallet") as mock_capture,
+        ):
+            client = app.test_client()
+            resp = client.post("/purchase", headers={"x-wallet-address": "0xabc"})
+            assert resp.status_code == 200
+            mock_capture.assert_not_called()
+
+    def test_no_ops_outside_request_context(self) -> None:
+        """Calling capture_wallet without a Flask request context must not crash.
+
+        Defensive: users who import capture_wallet into a background worker would otherwise
+        see a RuntimeError from Flask's ``g`` proxy.
+        """
+        from agentscore_gate.flask import capture_wallet
+
+        app = Flask(__name__)  # no gate registered
+        # App context but no request context — Flask's `g` is only meaningful inside a request.
+        with (
+            app.app_context(),
+            patch("agentscore_gate.flask.GateClient.capture_wallet") as mock_capture,
+        ):
+            capture_wallet("0xsigner", "evm")
+            mock_capture.assert_not_called()
+
+
+class TestFlaskUserAgent:
+    """Flask adapter user_agent + default User-Agent header coverage."""
+
+    def test_default_user_agent_format(self) -> None:
+        import httpx
+        import respx
+
+        app = _make_app()
+
+        with respx.mock:
+            route = respx.post("https://api.agentscore.sh/v1/assess").mock(
+                return_value=httpx.Response(200, json={"decision": "allow", "decision_reasons": []}),
+            )
+            client = app.test_client()
+            client.get("/", headers={"x-wallet-address": "0xabc"})
+            assert route.called
+            ua = route.calls[0].request.headers["User-Agent"]
+            assert ua.startswith("agentscore-gate/")
+
+    def test_custom_user_agent_prepended(self) -> None:
+        import httpx
+        import respx
+
+        app = _make_app(user_agent="myapp/2.0")
+
+        with respx.mock:
+            route = respx.post("https://api.agentscore.sh/v1/assess").mock(
+                return_value=httpx.Response(200, json={"decision": "allow", "decision_reasons": []}),
+            )
+            client = app.test_client()
+            client.get("/", headers={"x-wallet-address": "0xabc"})
+            ua = route.calls[0].request.headers["User-Agent"]
+            assert ua.startswith("myapp/2.0 (agentscore-gate/")
+
+
+class TestFlaskChainOption:
+    """Flask adapter chain= constructor option forwarding."""
+
+    def test_constructor_chain_stored_and_forwarded(self) -> None:
+        import json
+
+        import httpx
+        import respx
+
+        app = _make_app(chain="solana")
+
+        with respx.mock:
+            route = respx.post("https://api.agentscore.sh/v1/assess").mock(
+                return_value=httpx.Response(200, json={"decision": "allow", "decision_reasons": []}),
+            )
+            client = app.test_client()
+            client.get("/", headers={"x-wallet-address": "0xabc"})
+            body = json.loads(route.calls[0].request.content)
+            assert body["chain"] == "solana"
