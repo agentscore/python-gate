@@ -34,7 +34,7 @@ aiohttp = ["aiohttp>=3.8.0"]
 sanic = ["sanic>=23.0.0"]
 
 [project.urls]
-Homepage = "https://agentscore.sh"
+Homepage = "https://docs.agentscore.sh"
 Repository = "https://github.com/agentscore/python-gate"
 Issues = "https://github.com/agentscore/python-gate/issues"
 

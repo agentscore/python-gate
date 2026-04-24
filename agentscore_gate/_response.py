@@ -8,10 +8,35 @@ Includes the wallet-signer-match fields and the agent_memory payload.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict
 from typing import Any
 
 from agentscore_gate.types import DenialReason, build_agent_memory_hint
+
+_log = logging.getLogger("agentscore_gate")
+
+# Field names the gate claims authority over. Merchant-provided ``extra`` (from the
+# on_before_session hook) MUST NOT override these — a buggy or malicious hook could
+# otherwise replace ``verify_url`` with a phishing URL or drop agent_instructions.
+_RESERVED_FIELDS = frozenset(
+    {
+        "error",
+        "decision",
+        "reasons",
+        "verify_url",
+        "session_id",
+        "poll_secret",
+        "poll_url",
+        "agent_instructions",
+        "agent_memory",
+        "claimed_operator",
+        "actual_signer_operator",
+        "expected_signer",
+        "actual_signer",
+        "linked_wallets",
+    }
+)
 
 _MISSING_IDENTITY_INSTRUCTIONS = json.dumps(
     {
@@ -133,9 +158,12 @@ def denial_reason_to_body(reason: DenialReason) -> dict[str, Any]:
     if reason.agent_memory is not None:
         body["agent_memory"] = asdict(reason.agent_memory)
     # Wallet-signer-match fields, populated only for wallet_signer_mismatch.
+    # For that code, actual_signer_operator is ALWAYS meaningful: a string means the signer
+    # resolves to a different operator; null means the signer wallet isn't linked to any
+    # operator. Both carry actionable info, so emit `null` explicitly (matches node-gate).
     if reason.claimed_operator:
         body["claimed_operator"] = reason.claimed_operator
-    if reason.actual_signer_operator is not None:
+    if reason.code == "wallet_signer_mismatch":
         body["actual_signer_operator"] = reason.actual_signer_operator
     if reason.expected_signer:
         body["expected_signer"] = reason.expected_signer
@@ -143,7 +171,15 @@ def denial_reason_to_body(reason: DenialReason) -> dict[str, Any]:
         body["actual_signer"] = reason.actual_signer
     if reason.linked_wallets:
         body["linked_wallets"] = reason.linked_wallets
-    # Merchant-supplied fields from on_before_session hook.
+    # Merchant-supplied fields from on_before_session hook. Guard against collision
+    # with reserved fields — the gate owns those and can't let a hook override them.
     if reason.extra:
-        body.update(reason.extra)
+        for key, value in reason.extra.items():
+            if key in _RESERVED_FIELDS:
+                _log.warning(
+                    "on_before_session returned reserved field '%s' — ignoring to preserve gate authority",
+                    key,
+                )
+                continue
+            body[key] = value
     return body
