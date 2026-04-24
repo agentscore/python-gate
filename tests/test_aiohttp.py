@@ -306,7 +306,7 @@ async def test_aiohttp_passes_through_token_expired():
             401,
             json={
                 "error": {"code": "token_expired", "message": "expired"},
-                "next_steps": {"action": "mint_new_credential"},
+                "next_steps": {"action": "deliver_verify_url_and_poll"},
             },
         )
     )
@@ -324,7 +324,7 @@ async def test_aiohttp_passes_through_token_expired():
         assert resp.status == 403
         body = await resp.json()
         assert body["error"] == "token_expired"
-        assert json.loads(body["agent_instructions"]) == {"action": "mint_new_credential"}
+        assert json.loads(body["agent_instructions"]) == {"action": "deliver_verify_url_and_poll"}
 
 
 @pytest.mark.asyncio

@@ -702,7 +702,7 @@ def test_asgi_middleware_surfaces_token_denied_as_granular_denial() -> None:
                 401,
                 json={
                     "error": {"code": "token_expired", "message": "credential has expired"},
-                    "next_steps": {"action": "mint_new_credential"},
+                    "next_steps": {"action": "deliver_verify_url_and_poll"},
                 },
             ),
         )
@@ -713,7 +713,7 @@ def test_asgi_middleware_surfaces_token_denied_as_granular_denial() -> None:
     body = res.json()
     assert body["error"] == "token_expired"
     # agent_instructions is a JSON string of next_steps
-    assert json.loads(body["agent_instructions"]) == {"action": "mint_new_credential"}
+    assert json.loads(body["agent_instructions"]) == {"action": "deliver_verify_url_and_poll"}
 
 
 # ---------------------------------------------------------------------------

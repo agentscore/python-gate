@@ -302,7 +302,7 @@ def test_fastapi_passes_through_token_expired():
             401,
             json={
                 "error": {"code": "token_expired", "message": "expired"},
-                "next_steps": {"action": "mint_new_credential"},
+                "next_steps": {"action": "deliver_verify_url_and_poll"},
             },
         )
     )
@@ -319,7 +319,7 @@ def test_fastapi_passes_through_token_expired():
     # FastAPI wraps the denial body under HTTPException.detail.
     detail = resp.json()["detail"]
     assert detail["error"] == "token_expired"
-    assert json.loads(detail["agent_instructions"]) == {"action": "mint_new_credential"}
+    assert json.loads(detail["agent_instructions"]) == {"action": "deliver_verify_url_and_poll"}
 
 
 @respx.mock
