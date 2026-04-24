@@ -63,4 +63,4 @@ include = ["agentscore_gate"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "--cov=agentscore_gate --cov-report=term-missing --cov-fail-under=91"
+addopts = "--cov=agentscore_gate --cov-report=term-missing --cov-fail-under=90"

@@ -4,9 +4,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from agentscore_gate._response import build_missing_identity_reason, denial_reason_to_body
 from agentscore_gate.client import GateClient, PaymentRequiredError
 from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason_sync
-from agentscore_gate.types import AgentIdentity, DenialReason, Network
+from agentscore_gate.types import (
+    AgentIdentity,
+    DenialReason,
+    Network,
+    VerifyWalletSignerMatchOptions,
+    VerifyWalletSignerResult,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,24 +42,7 @@ def _default_extract_chain(_request: Request) -> str | None:
 
 
 def _default_on_denied(_request: Request, reason: DenialReason) -> tuple[dict[str, Any], int]:
-    body: dict[str, Any] = {"error": reason.code}
-    if reason.decision is not None:
-        body["decision"] = reason.decision
-    if reason.reasons:
-        body["reasons"] = reason.reasons
-    if reason.verify_url:
-        body["verify_url"] = reason.verify_url
-    if reason.session_id:
-        body["session_id"] = reason.session_id
-    if reason.poll_secret:
-        body["poll_secret"] = reason.poll_secret
-    if reason.poll_url:
-        body["poll_url"] = reason.poll_url
-    if reason.agent_instructions:
-        body["agent_instructions"] = reason.agent_instructions
-    if reason.extra:
-        body.update(reason.extra)
-    return body, 403
+    return denial_reason_to_body(reason), 403
 
 
 def agentscore_gate(
@@ -111,11 +101,12 @@ def agentscore_gate(
         g._agentscore_gate = {
             "client": client,
             "operator_token": identity.operator_token if identity else None,
+            "wallet_address": identity.address if identity else None,
         }
         if not identity:
             if client.fail_open:
                 return None
-            denial_reason = DenialReason(code="missing_identity")
+            denial_reason = build_missing_identity_reason(client.base_url)
             if create_session_on_missing is not None:
                 session_reason = try_create_session_denial_reason_sync(
                     create_session_on_missing,
@@ -172,6 +163,33 @@ def agentscore_gate(
                 msg = "on_denied must return a (dict, int) tuple, e.g. ({'error': 'denied'}, 403)"
                 raise TypeError(msg) from exc
             return jsonify(body), status
+
+
+def verify_wallet_signer_match(
+    signer: str | None,
+    network: Network = "evm",
+) -> VerifyWalletSignerResult:
+    """Verify payment signer matches claimed X-Wallet-Address (TEC-226).
+
+    Reads gate state from Flask's ``g`` object. No-ops when operator-token-authenticated or
+    when both headers were sent. See :func:`agentscore_gate.middleware.verify_wallet_signer_match`
+    for the full contract.
+    """
+    from flask import g
+
+    try:
+        state = getattr(g, "_agentscore_gate", None)
+    except RuntimeError:
+        return VerifyWalletSignerResult(kind="pass")
+    if not state or not state.get("wallet_address") or state.get("operator_token"):
+        return VerifyWalletSignerResult(kind="pass")
+    return state["client"].verify_wallet_signer_match(
+        VerifyWalletSignerMatchOptions(
+            claimed_wallet=state["wallet_address"],
+            signer=signer,
+            network=network,
+        ),
+    )
 
 
 def capture_wallet(

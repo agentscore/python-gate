@@ -6,9 +6,16 @@ from typing import Any
 
 from django.http import HttpRequest, JsonResponse
 
+from agentscore_gate._response import build_missing_identity_reason, denial_reason_to_body
 from agentscore_gate.client import GateClient, PaymentRequiredError
 from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason_sync
-from agentscore_gate.types import AgentIdentity, DenialReason, Network
+from agentscore_gate.types import (
+    AgentIdentity,
+    DenialReason,
+    Network,
+    VerifyWalletSignerMatchOptions,
+    VerifyWalletSignerResult,
+)
 
 DEFAULT_ADDRESS_HEADER = "HTTP_X_WALLET_ADDRESS"
 DEFAULT_TOKEN_HEADER = "HTTP_X_OPERATOR_TOKEN"
@@ -76,24 +83,7 @@ class AgentScoreMiddleware:
 
     @staticmethod
     def _default_on_denied(_request: HttpRequest, reason: DenialReason) -> JsonResponse:
-        body: dict[str, Any] = {"error": reason.code}
-        if reason.decision is not None:
-            body["decision"] = reason.decision
-        if reason.reasons:
-            body["reasons"] = reason.reasons
-        if reason.verify_url:
-            body["verify_url"] = reason.verify_url
-        if reason.session_id:
-            body["session_id"] = reason.session_id
-        if reason.poll_secret:
-            body["poll_secret"] = reason.poll_secret
-        if reason.poll_url:
-            body["poll_url"] = reason.poll_url
-        if reason.agent_instructions:
-            body["agent_instructions"] = reason.agent_instructions
-        if reason.extra:
-            body.update(reason.extra)
-        return JsonResponse(body, status=403)
+        return JsonResponse(denial_reason_to_body(reason), status=403)
 
     def __call__(self, request: HttpRequest) -> Any:
         """Process the request."""
@@ -103,7 +93,11 @@ class AgentScoreMiddleware:
         setattr(  # noqa: B010 — dynamic attribute attach on HttpRequest
             request,
             "_agentscore_gate",
-            {"client": self._client, "operator_token": identity.operator_token if identity else None},
+            {
+                "client": self._client,
+                "operator_token": identity.operator_token if identity else None,
+                "wallet_address": identity.address if identity else None,
+            },
         )
 
         if not identity:
@@ -117,7 +111,7 @@ class AgentScoreMiddleware:
                 )
                 if session_reason is not None:
                     return self._on_denied(request, session_reason)
-            return self._on_denied(request, DenialReason(code="missing_identity"))
+            return self._on_denied(request, build_missing_identity_reason(self._client.base_url))
 
         chain_override = self._extract_chain(request)
 
@@ -143,6 +137,28 @@ class AgentScoreMiddleware:
             if self._client.fail_open:
                 return self.get_response(request)
             return self._on_denied(request, DenialReason(code="api_error"))
+
+
+def verify_wallet_signer_match(
+    request: HttpRequest,
+    signer: str | None,
+    network: Network = "evm",
+) -> VerifyWalletSignerResult:
+    """Verify payment signer matches claimed X-Wallet-Address (TEC-226).
+
+    No-ops when operator-token-authenticated or when both headers were sent. See
+    :func:`agentscore_gate.middleware.verify_wallet_signer_match` for the full contract.
+    """
+    state = getattr(request, "_agentscore_gate", None)
+    if not state or not state.get("wallet_address") or state.get("operator_token"):
+        return VerifyWalletSignerResult(kind="pass")
+    return state["client"].verify_wallet_signer_match(
+        VerifyWalletSignerMatchOptions(
+            claimed_wallet=state["wallet_address"],
+            signer=signer,
+            network=network,
+        ),
+    )
 
 
 def capture_wallet(

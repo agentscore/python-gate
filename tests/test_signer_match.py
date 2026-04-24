@@ -187,3 +187,137 @@ async def test_averify_wallet_signer_match_requires_signing_on_null_signer() -> 
         VerifyWalletSignerMatchOptions(claimed_wallet=WALLET_A, signer=None),
     )
     assert result.kind == "wallet_auth_requires_wallet_signing"
+
+
+# ---------------------------------------------------------------------------
+# Adapter wrapper tests — TEC-226 Section IV: token wins, signer check no-ops
+# when BOTH headers are sent. Also tests the new agent_memory body serialization.
+# ---------------------------------------------------------------------------
+
+
+class _FakeState(dict):
+    """Minimal state dict shape the adapter wrappers read."""
+
+
+@pytest.mark.asyncio
+async def test_asgi_verify_wallet_signer_match_no_op_on_operator_token_path() -> None:
+    """ASGI wrapper returns pass without calling client when request was operator-token authenticated."""
+    from unittest.mock import AsyncMock
+
+    from agentscore_gate.middleware import GATE_STATE_KEY, verify_wallet_signer_match
+
+    fake_client = AsyncMock()
+    request = MagicMock()
+    request.scope = {"state": {GATE_STATE_KEY: {"client": fake_client, "operator_token": "opc_test", "wallet_address": None}}}
+
+    result = await verify_wallet_signer_match(request, signer="0xabc")
+
+    assert result.kind == "pass"
+    fake_client.averify_wallet_signer_match.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_asgi_verify_wallet_signer_match_no_op_when_both_headers_sent() -> None:
+    """Section IV: token wins when both headers sent — signer check must no-op."""
+    from unittest.mock import AsyncMock
+
+    from agentscore_gate.middleware import GATE_STATE_KEY, verify_wallet_signer_match
+
+    fake_client = AsyncMock()
+    request = MagicMock()
+    request.scope = {
+        "state": {
+            GATE_STATE_KEY: {
+                "client": fake_client,
+                "operator_token": "opc_test",
+                "wallet_address": WALLET_A,
+            },
+        },
+    }
+
+    result = await verify_wallet_signer_match(request, signer=WALLET_B)
+
+    assert result.kind == "pass"
+    assert result.claimed_operator is None
+    fake_client.averify_wallet_signer_match.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_asgi_verify_wallet_signer_match_invokes_client_on_wallet_auth() -> None:
+    """Strict wallet-auth path — helper calls client and returns its result."""
+    from unittest.mock import AsyncMock
+
+    from agentscore_gate.middleware import GATE_STATE_KEY, verify_wallet_signer_match
+    from agentscore_gate.types import VerifyWalletSignerResult
+
+    fake_client = AsyncMock()
+    fake_client.averify_wallet_signer_match.return_value = VerifyWalletSignerResult(
+        kind="wallet_signer_mismatch",
+        claimed_operator="op_claimed",
+        actual_signer_operator="op_signer",
+    )
+    request = MagicMock()
+    request.scope = {
+        "state": {
+            GATE_STATE_KEY: {
+                "client": fake_client,
+                "operator_token": None,
+                "wallet_address": WALLET_A,
+            },
+        },
+    }
+
+    result = await verify_wallet_signer_match(request, signer=WALLET_B)
+
+    assert result.kind == "wallet_signer_mismatch"
+    fake_client.averify_wallet_signer_match.assert_called_once()
+
+
+def test_denial_reason_to_body_includes_agent_memory() -> None:
+    """TEC-227: the shared serializer marshals agent_memory into the body dict."""
+    from agentscore_gate._response import denial_reason_to_body
+    from agentscore_gate.types import DenialReason, build_agent_memory_hint
+
+    reason = DenialReason(
+        code="missing_identity",
+        agent_memory=build_agent_memory_hint("https://api.agentscore.sh"),
+    )
+    body = denial_reason_to_body(reason)
+
+    assert body["error"] == "missing_identity"
+    assert "agent_memory" in body
+    assert body["agent_memory"]["save_for_future_agentscore_gates"] is True
+    assert "identity_paths" in body["agent_memory"]
+
+
+def test_denial_reason_to_body_includes_wallet_signer_mismatch_fields() -> None:
+    """TEC-226: the shared serializer marshals wallet-signer-match fields into the body."""
+    from agentscore_gate._response import denial_reason_to_body
+    from agentscore_gate.types import DenialReason
+
+    reason = DenialReason(
+        code="wallet_signer_mismatch",
+        claimed_operator="op_claimed",
+        actual_signer_operator="op_signer",
+        expected_signer=WALLET_A.lower(),
+        actual_signer=WALLET_B.lower(),
+        linked_wallets=[WALLET_A.lower()],
+    )
+    body = denial_reason_to_body(reason)
+
+    assert body["error"] == "wallet_signer_mismatch"
+    assert body["claimed_operator"] == "op_claimed"
+    assert body["actual_signer_operator"] == "op_signer"
+    assert body["expected_signer"] == WALLET_A.lower()
+    assert body["actual_signer"] == WALLET_B.lower()
+    assert body["linked_wallets"] == [WALLET_A.lower()]
+
+
+def test_build_missing_identity_reason_attaches_memory_hint() -> None:
+    """TEC-227: the missing_identity builder attaches an agent_memory hint by default."""
+    from agentscore_gate._response import build_missing_identity_reason
+
+    reason = build_missing_identity_reason("https://api.agentscore.sh")
+    assert reason.code == "missing_identity"
+    assert reason.agent_memory is not None
+    assert reason.agent_memory.save_for_future_agentscore_gates is True

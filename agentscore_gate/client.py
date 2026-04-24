@@ -51,6 +51,8 @@ class GateClient:
         self.fail_open = fail_open
         self._api_key = api_key
         self._base_url = base_url
+        # Public accessor so adapters can build agent_memory hints pointing at the same API.
+        self.base_url = base_url
         self._chain = chain
         default_ua = f"agentscore-gate/{_pkg_version('agentscore-gate')}"
         self.user_agent = f"{user_agent} ({default_ua})" if user_agent else default_ua
