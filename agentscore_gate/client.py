@@ -9,6 +9,10 @@ from typing import Any, Literal
 
 import httpx
 
+from agentscore_gate._response import (
+    WALLET_AUTH_REQUIRES_WALLET_SIGNING_INSTRUCTIONS,
+    WALLET_SIGNER_MISMATCH_INSTRUCTIONS,
+)
 from agentscore_gate.cache import TTLCache
 from agentscore_gate.types import (
     AgentIdentity,
@@ -369,6 +373,7 @@ class GateClient:
             return VerifyWalletSignerResult(
                 kind="wallet_auth_requires_wallet_signing",
                 claimed_wallet=options.claimed_wallet,
+                agent_instructions=WALLET_AUTH_REQUIRES_WALLET_SIGNING_INSTRUCTIONS,
             )
         claimed = options.claimed_wallet.lower()
         signer_lower = signer.lower()
@@ -391,6 +396,7 @@ class GateClient:
             expected_signer=claimed,
             actual_signer=signer_lower,
             linked_wallets=claimed_links,
+            agent_instructions=WALLET_SIGNER_MISMATCH_INSTRUCTIONS,
         )
 
     async def averify_wallet_signer_match(self, options: VerifyWalletSignerMatchOptions) -> VerifyWalletSignerResult:
@@ -401,6 +407,7 @@ class GateClient:
             return VerifyWalletSignerResult(
                 kind="wallet_auth_requires_wallet_signing",
                 claimed_wallet=options.claimed_wallet,
+                agent_instructions=WALLET_AUTH_REQUIRES_WALLET_SIGNING_INSTRUCTIONS,
             )
         claimed = options.claimed_wallet.lower()
         signer_lower = signer.lower()
@@ -423,6 +430,7 @@ class GateClient:
             expected_signer=claimed,
             actual_signer=signer_lower,
             linked_wallets=claimed_links,
+            agent_instructions=WALLET_SIGNER_MISMATCH_INSTRUCTIONS,
         )
 
 

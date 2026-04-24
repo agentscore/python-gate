@@ -115,6 +115,10 @@ class VerifyWalletSignerResult:
     actual_signer: str | None = None
     linked_wallets: list[str] = field(default_factory=list)
     claimed_wallet: str | None = None
+    # JSON-encoded action copy (action + steps + user_message) populated on non-pass/
+    # non-api_error kinds so the merchant can spread it directly into a 403 body and
+    # the agent sees a concrete recovery path without a discovery-doc round trip.
+    agent_instructions: str | None = None
 
 
 # Canonical production AgentScore API — agent memory pointers are always hardcoded to this

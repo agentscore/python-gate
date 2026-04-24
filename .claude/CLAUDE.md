@@ -15,7 +15,18 @@ Default checks `X-Operator-Token` first, then `X-Wallet-Address`. Types: `AgentI
 
 ### Wallet-signer binding
 
-Every adapter exposes `verify_wallet_signer_match(request, signer, network='evm')` (async) or the sync counterpart in Flask/Django. Call AFTER the agent submits a payment credential, BEFORE settlement. Extract the signer from the payment payload (EIP-3009 `from`, Tempo MPP DID, etc.). Returns a `VerifyWalletSignerResult` with `kind: "pass" | "wallet_signer_mismatch" | "wallet_auth_requires_wallet_signing"`. Non-pass variants carry `claimed_operator`, `actual_signer_operator`, `expected_signer`, `actual_signer`, `linked_wallets` (same-operator sibling wallets that would also be accepted). No-ops for operator-token requests or when both identity headers were sent. Shared response marshalling lives in `agentscore_gate/_response.py` (`denial_reason_to_body`).
+Every adapter exposes `verify_wallet_signer_match(request, signer, network='evm')` (async) or the sync counterpart in Flask/Django. Call AFTER the agent submits a payment credential, BEFORE settlement. Extract the signer from the payment payload (EIP-3009 `from`, Tempo MPP DID, etc.). Returns a `VerifyWalletSignerResult` with `kind: "pass" | "wallet_signer_mismatch" | "wallet_auth_requires_wallet_signing"`. Non-pass variants carry `claimed_operator`, `actual_signer_operator`, `expected_signer`, `actual_signer`, `linked_wallets` (same-operator sibling wallets that would also be accepted), plus `agent_instructions` — a JSON-encoded `{action, steps, user_message}` block merchants can spread directly into the 403 body. No-ops for operator-token requests or when both identity headers were sent. Shared response marshalling lives in `agentscore_gate/_response.py` (`denial_reason_to_body`).
+
+### Action copy on denials (agent_instructions convention)
+
+Every gate-emitted denial carries an `agent_instructions` JSON string (`{action, steps, user_message}`) so agents see a concrete recovery path inside the response. Canned copies are constants in `agentscore_gate/_response.py`:
+
+- `missing_identity` → `probe_identity_then_session` (try wallet on signing rails, fall back to opc_..., fall back to session flow)
+- `wallet_signer_mismatch` → `resign_or_switch_to_operator_token` (re-sign from `expected_signer` / any `linked_wallets`, or drop the wallet header and use opc_...)
+- `wallet_auth_requires_wallet_signing` → `switch_to_operator_token` (non-signing rail; drop wallet header)
+- `token_expired` / `token_revoked` — API emits `next_steps` and the middleware stringifies it as `agent_instructions` on pass-through.
+
+Convention matches the API's structured `next_steps` responses (same `{action, user_message}` shape, wrapped as a JSON string inside `agent_instructions`). `user_message` lives inside — never duplicated at top level.
 
 ### Cross-merchant agent memory
 

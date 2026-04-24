@@ -111,6 +111,11 @@ def test_verify_wallet_signer_match_requires_signing_on_null_signer() -> None:
     )
     assert result.kind == "wallet_auth_requires_wallet_signing"
     assert result.claimed_wallet == WALLET_A
+    assert result.agent_instructions is not None
+    assert "switch_to_operator_token" in result.agent_instructions
+    # user_message lives inside agent_instructions (single source of truth).
+    instr = json.loads(result.agent_instructions)
+    assert "wallet-signing rails" in instr["user_message"] or "Wallet-address identity" in instr["user_message"]
 
 
 def test_verify_wallet_signer_match_same_operator_pass() -> None:
@@ -153,6 +158,10 @@ def test_verify_wallet_signer_match_different_operator_rejects() -> None:
     assert result.actual_signer_operator == "op_attacker"
     assert result.expected_signer == WALLET_A.lower()
     assert result.actual_signer == WALLET_B.lower()
+    assert result.agent_instructions is not None
+    assert "resign_or_switch_to_operator_token" in result.agent_instructions
+    instr = json.loads(result.agent_instructions)
+    assert "operator" in instr["user_message"]
 
 
 def test_verify_wallet_signer_match_transient_error_emits_api_error() -> None:
@@ -393,22 +402,24 @@ def test_build_missing_identity_reason_attaches_memory_hint() -> None:
     assert reason.agent_memory.save_for_future_agentscore_gates is True
 
 
-def test_build_missing_identity_reason_hints_send_existing_identity() -> None:
-    """Bootstrap denial carries agent_instructions with action=send_existing_identity so
-    returning agents try a stored credential before running the session flow."""
+def test_build_missing_identity_reason_hints_probe_strategy() -> None:
+    """Bootstrap denial carries agent_instructions that describe the full probe strategy —
+    wallet-first on signing rails, fall back to stored opc_..., fall back to session flow."""
     from agentscore_gate._response import build_missing_identity_reason, denial_reason_to_body
 
     reason = build_missing_identity_reason("https://api.agentscore.sh")
     assert reason.agent_instructions is not None
 
     instructions = json.loads(reason.agent_instructions)
-    assert instructions["action"] == "send_existing_identity"
+    assert instructions["action"] == "probe_identity_then_session"
+    assert isinstance(instructions["steps"], list)
+    assert len(instructions["steps"]) >= 3
     assert "X-Operator-Token" in instructions["user_message"] or "X-Wallet-Address" in instructions["user_message"]
 
     # Shows up in the serialized body.
     body = denial_reason_to_body(reason)
     body_instructions = json.loads(body["agent_instructions"])
-    assert body_instructions["action"] == "send_existing_identity"
+    assert body_instructions["action"] == "probe_identity_then_session"
 
 
 # ---------------------------------------------------------------------------
