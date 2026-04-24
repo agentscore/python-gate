@@ -237,18 +237,20 @@ class GateClient:
     # TEC-226 — wallet-auth signer binding
     # ------------------------------------------------------------------
 
-    def _resolve_from_cache(self, wallet: str) -> tuple[bool, str | None]:
-        """Look up a wallet in either cache. Returns (hit, operator). hit=False means miss."""
+    def _resolve_from_cache(self, wallet: str) -> tuple[bool, str | None, list[str]]:
+        """Look up a wallet in either cache. Returns (hit, operator, linked_wallets)."""
         for key in (wallet, f"resolve:{wallet}"):
             cached = self._cache.get(key)
             if cached is not None:
                 raw = cached.raw or {}
                 op = raw.get("resolved_operator")
+                links_raw = raw.get("linked_wallets")
+                links = [w for w in links_raw if isinstance(w, str)] if isinstance(links_raw, list) else []
                 if op is None or isinstance(op, str):
-                    return True, op
-        return False, None
+                    return True, op, links
+        return False, None, []
 
-    def _resolve_wallet_to_operator(self, wallet_address: str) -> tuple[bool, str | None]:
+    def _resolve_wallet_to_operator(self, wallet_address: str) -> tuple[bool, str | None, list[str]]:
         """Resolve a wallet to its operator id via /v1/assess.
 
         Returns ``(ok, operator)``:
@@ -260,11 +262,16 @@ class GateClient:
         Checks both the main evaluate cache and the resolve-specific cache before calling
         the API — saves a second /v1/assess when the gate already resolved this wallet
         during identity evaluation.
+
+        Returns ``(ok, operator, linked_wallets)``. ``linked_wallets`` is the set of wallets
+        sharing the same operator (both wallet-claim and TEC-189 capture); echoed back to
+        agents on ``wallet_signer_mismatch`` denials so they know which wallets they can
+        legitimately sign with.
         """
         wallet = wallet_address.lower()
-        hit, op = self._resolve_from_cache(wallet)
+        hit, op, links = self._resolve_from_cache(wallet)
         if hit:
-            return True, op
+            return True, op, links
         try:
             resp = self._sync_client.post(
                 f"{self._base_url}/v1/assess",
@@ -272,19 +279,21 @@ class GateClient:
                 content=json.dumps({"address": wallet_address}),
             )
         except httpx.HTTPError:
-            return False, None
+            return False, None, []
         if not resp.is_success:
-            return False, None
+            return False, None, []
         data: dict[str, Any] = resp.json()
         self._cache.set(f"resolve:{wallet}", AssessResult(allow=True, raw=data))
         op_value = data.get("resolved_operator")
-        return True, op_value if isinstance(op_value, str) else None
+        linked_raw = data.get("linked_wallets")
+        linked = [w for w in linked_raw if isinstance(w, str)] if isinstance(linked_raw, list) else []
+        return True, (op_value if isinstance(op_value, str) else None), linked
 
-    async def _aresolve_wallet_to_operator(self, wallet_address: str) -> tuple[bool, str | None]:
+    async def _aresolve_wallet_to_operator(self, wallet_address: str) -> tuple[bool, str | None, list[str]]:
         wallet = wallet_address.lower()
-        hit, op = self._resolve_from_cache(wallet)
+        hit, op, links = self._resolve_from_cache(wallet)
         if hit:
-            return True, op
+            return True, op, links
         try:
             resp = await self._async_client.post(
                 f"{self._base_url}/v1/assess",
@@ -292,13 +301,15 @@ class GateClient:
                 content=json.dumps({"address": wallet_address}),
             )
         except httpx.HTTPError:
-            return False, None
+            return False, None, []
         if not resp.is_success:
-            return False, None
+            return False, None, []
         data: dict[str, Any] = resp.json()
         self._cache.set(f"resolve:{wallet}", AssessResult(allow=True, raw=data))
         op_value = data.get("resolved_operator")
-        return True, op_value if isinstance(op_value, str) else None
+        linked_raw = data.get("linked_wallets")
+        linked = [w for w in linked_raw if isinstance(w, str)] if isinstance(linked_raw, list) else []
+        return True, (op_value if isinstance(op_value, str) else None), linked
 
     def verify_wallet_signer_match(self, options: VerifyWalletSignerMatchOptions) -> VerifyWalletSignerResult:
         """Verify payment signer resolves to the same operator as the claimed wallet (TEC-226).
@@ -320,8 +331,8 @@ class GateClient:
         signer_lower = signer.lower()
         if claimed == signer_lower:
             return VerifyWalletSignerResult(kind="pass")
-        claimed_ok, claimed_op = self._resolve_wallet_to_operator(claimed)
-        signer_ok, signer_op = self._resolve_wallet_to_operator(signer_lower)
+        claimed_ok, claimed_op, claimed_links = self._resolve_wallet_to_operator(claimed)
+        signer_ok, signer_op, _ = self._resolve_wallet_to_operator(signer_lower)
         if not claimed_ok or not signer_ok:
             return VerifyWalletSignerResult(kind="api_error", claimed_wallet=claimed)
         if claimed_op and signer_op and claimed_op == signer_op:
@@ -332,7 +343,7 @@ class GateClient:
             actual_signer_operator=signer_op,
             expected_signer=claimed,
             actual_signer=signer_lower,
-            linked_wallets=[],
+            linked_wallets=claimed_links,
         )
 
     async def averify_wallet_signer_match(self, options: VerifyWalletSignerMatchOptions) -> VerifyWalletSignerResult:
@@ -347,8 +358,8 @@ class GateClient:
         signer_lower = signer.lower()
         if claimed == signer_lower:
             return VerifyWalletSignerResult(kind="pass")
-        claimed_ok, claimed_op = await self._aresolve_wallet_to_operator(claimed)
-        signer_ok, signer_op = await self._aresolve_wallet_to_operator(signer_lower)
+        claimed_ok, claimed_op, claimed_links = await self._aresolve_wallet_to_operator(claimed)
+        signer_ok, signer_op, _ = await self._aresolve_wallet_to_operator(signer_lower)
         if not claimed_ok or not signer_ok:
             return VerifyWalletSignerResult(kind="api_error", claimed_wallet=claimed)
         if claimed_op and signer_op and claimed_op == signer_op:
@@ -359,7 +370,7 @@ class GateClient:
             actual_signer_operator=signer_op,
             expected_signer=claimed,
             actual_signer=signer_lower,
-            linked_wallets=[],
+            linked_wallets=claimed_links,
         )
 
 
