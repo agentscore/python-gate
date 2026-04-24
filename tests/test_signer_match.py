@@ -219,6 +219,32 @@ async def test_averify_wallet_signer_match_byte_equal_pass() -> None:
 
 
 @pytest.mark.asyncio
+async def test_averify_wallet_signer_match_linked_wallets_threaded_through() -> None:
+    """TEC-226: async path surfaces linked_wallets from the claimed wallet's /v1/assess response."""
+    from unittest.mock import AsyncMock
+
+    client = GateClient(api_key=API_KEY)
+    responses = iter([
+        {"resolved_operator": "op_claimed", "linked_wallets": [WALLET_A.lower(), "0xcccc000000000000000000000000000000000000"]},
+        {"resolved_operator": "op_signer", "linked_wallets": []},
+    ])
+
+    async def fake_apost(*_args: object, **_kwargs: object) -> MagicMock:
+        resp = MagicMock()
+        resp.is_success = True
+        resp.status_code = 200
+        resp.json = MagicMock(return_value=next(responses))
+        return resp
+
+    client._async_client.post = AsyncMock(side_effect=fake_apost)
+    result = await client.averify_wallet_signer_match(
+        VerifyWalletSignerMatchOptions(claimed_wallet=WALLET_A, signer=WALLET_B),
+    )
+    assert result.kind == "wallet_signer_mismatch"
+    assert result.linked_wallets == [WALLET_A.lower(), "0xcccc000000000000000000000000000000000000"]
+
+
+@pytest.mark.asyncio
 async def test_averify_wallet_signer_match_requires_signing_on_null_signer() -> None:
     client = GateClient(api_key=API_KEY)
     result = await client.averify_wallet_signer_match(
