@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -101,13 +102,18 @@ def _session_denial_reason(
     extra: dict[str, Any] | None = None,
     base_url: str = "https://api.agentscore.sh",
 ) -> DenialReason:
+    # The API emits structured ``next_steps`` on /v1/sessions success. Stringify it into
+    # the gate's ``agent_instructions`` contract so every denial body surfaces the same
+    # JSON-encoded {action, steps, user_message} envelope.
+    next_steps = data.get("next_steps")
+    agent_instructions = json.dumps(next_steps) if next_steps else None
     return DenialReason(
         code="identity_verification_required",
         verify_url=data.get("verify_url"),
         session_id=data.get("session_id"),
         poll_secret=data.get("poll_secret"),
         poll_url=data.get("poll_url"),
-        agent_instructions=data.get("agent_instructions"),
+        agent_instructions=agent_instructions,
         agent_memory=build_agent_memory_hint(base_url),
         extra=extra,
     )

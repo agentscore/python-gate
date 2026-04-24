@@ -166,7 +166,10 @@ class TestCreateSessionOnMissing:
                     "session_id": "sess_abc123",
                     "verify_url": "https://agentscore.sh/verify/sess_abc123",
                     "poll_secret": "ps_secret",
-                    "agent_instructions": "please verify",
+                    "next_steps": {
+                        "action": "deliver_verify_url_and_poll",
+                        "user_message": "please verify",
+                    },
                 },
             )
         )
@@ -182,7 +185,12 @@ class TestCreateSessionOnMissing:
         assert detail["session_id"] == "sess_abc123"
         assert detail["verify_url"] == "https://agentscore.sh/verify/sess_abc123"
         assert detail["poll_secret"] == "ps_secret"
-        assert detail["agent_instructions"] == "please verify"
+        # agent_instructions is the JSON-stringified next_steps from the API.
+        import json as _json
+
+        parsed = _json.loads(detail["agent_instructions"])
+        assert parsed["action"] == "deliver_verify_url_and_poll"
+        assert parsed["user_message"] == "please verify"
 
     @respx.mock
     def test_falls_back_to_missing_identity_on_session_api_failure(self):

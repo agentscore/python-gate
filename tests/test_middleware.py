@@ -24,7 +24,11 @@ SESSION_RESPONSE = {
     "session_id": "sess_abc123",
     "verify_url": "https://agentscore.sh/verify/sess_abc123",
     "poll_secret": "ps_secret_456",
-    "agent_instructions": "Please complete identity verification at the verify_url.",
+    # API emits structured next_steps; gate stringifies into agent_instructions.
+    "next_steps": {
+        "action": "deliver_verify_url_and_poll",
+        "user_message": "Please complete identity verification at the verify_url.",
+    },
 }
 
 
@@ -67,7 +71,10 @@ class TestCreateSessionOnMissing:
         assert data["verify_url"] == "https://agentscore.sh/verify/sess_abc123"
         assert data["session_id"] == "sess_abc123"
         assert data["poll_secret"] == "ps_secret_456"
-        assert data["agent_instructions"] == "Please complete identity verification at the verify_url."
+        # agent_instructions is the JSON-stringified next_steps from the API.
+        parsed = json.loads(data["agent_instructions"])
+        assert parsed["action"] == "deliver_verify_url_and_poll"
+        assert parsed["user_message"] == "Please complete identity verification at the verify_url."
 
     @respx.mock
     def test_session_request_uses_correct_api_key(self):

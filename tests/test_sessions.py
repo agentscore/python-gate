@@ -13,17 +13,24 @@ from agentscore_gate.sessions import (
 )
 
 SESSIONS_URL = "https://api.agentscore.sh/v1/sessions"
+# API emits structured next_steps on /v1/sessions success. The gate stringifies it into
+# agent_instructions for consistent rendering with every other denial body.
 SESSION_RESPONSE = {
     "session_id": "sess_abc",
     "verify_url": "https://agentscore.sh/verify/sess_abc",
     "poll_secret": "ps_secret",
-    "agent_instructions": "please verify",
+    "next_steps": {
+        "action": "deliver_verify_url_and_poll",
+        "user_message": "please verify",
+    },
 }
 
 
 class TestSyncHelper:
     @respx.mock
     def test_returns_denial_reason_on_success(self):
+        import json
+
         respx.post(SESSIONS_URL).mock(return_value=httpx.Response(200, json=SESSION_RESPONSE))
         reason = try_create_session_denial_reason_sync(
             CreateSessionOnMissing(api_key="ask_test"),
@@ -34,7 +41,11 @@ class TestSyncHelper:
         assert reason.session_id == "sess_abc"
         assert reason.verify_url == "https://agentscore.sh/verify/sess_abc"
         assert reason.poll_secret == "ps_secret"
-        assert reason.agent_instructions == "please verify"
+        # agent_instructions is the JSON-stringified next_steps from the API.
+        assert reason.agent_instructions is not None
+        parsed = json.loads(reason.agent_instructions)
+        assert parsed["action"] == "deliver_verify_url_and_poll"
+        assert parsed["user_message"] == "please verify"
 
     @respx.mock
     def test_returns_none_on_server_error(self):

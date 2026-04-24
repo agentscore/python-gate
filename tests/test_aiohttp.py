@@ -188,7 +188,10 @@ class TestCreateSessionOnMissing:
                     "session_id": "sess_abc123",
                     "verify_url": "https://agentscore.sh/verify/sess_abc123",
                     "poll_secret": "ps_secret",
-                    "agent_instructions": "please verify",
+                    "next_steps": {
+                        "action": "deliver_verify_url_and_poll",
+                        "user_message": "please verify",
+                    },
                 },
             )
         )
@@ -203,7 +206,11 @@ class TestCreateSessionOnMissing:
             assert data["session_id"] == "sess_abc123"
             assert data["verify_url"] == "https://agentscore.sh/verify/sess_abc123"
             assert data["poll_secret"] == "ps_secret"
-            assert data["agent_instructions"] == "please verify"
+            import json as _json
+
+            parsed = _json.loads(data["agent_instructions"])
+            assert parsed["action"] == "deliver_verify_url_and_poll"
+            assert parsed["user_message"] == "please verify"
 
     @pytest.mark.asyncio
     @respx.mock

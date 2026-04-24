@@ -18,21 +18,28 @@ _MISSING_IDENTITY_INSTRUCTIONS = json.dumps(
         "action": "probe_identity_then_session",
         "steps": [
             (
-                "If you have a wallet in hand AND this merchant accepts a wallet-signing rail "
+                "If you have a wallet AND this merchant accepts a wallet-signing rail "
                 "(Tempo MPP or x402 — see openapi.json x-payment-info): send X-Wallet-Address "
-                "and retry. If the wallet is linked to an AgentScore operator anywhere (via "
-                "prior SIWE claim or prior captureWallet), this passes in one round trip."
+                "and retry. If the wallet is already linked to an AgentScore operator (via "
+                "prior SIWE claim or prior captureWallet), this passes in one round trip. If "
+                "the wallet is unlinked or the account has no KYC, the 403 will include a "
+                "verify_url — share it with the user to claim the wallet + complete KYC, "
+                "then retry."
             ),
             (
-                "If step 1 is denied (wallet_signer_mismatch, unknown_address, or missing_kyc) "
-                "OR you already have a stored operator_token: send X-Operator-Token: opc_... "
-                "and retry."
+                "If step 1 is denied or you already have a stored operator_token (valid + "
+                "not expired): send X-Operator-Token: opc_... and retry."
             ),
             (
-                "If neither works: retry with NO identity header. The 403 will include "
-                "verify_url + session_id + poll_secret. Share verify_url with the user, then "
-                "poll poll_url every 5s with X-Poll-Secret until status=verified — the poll "
-                "response returns a one-time operator_token."
+                "If neither applies: retry with NO identity header. Merchants that "
+                "auto-create verification sessions (most AgentScore merchants do) return "
+                "verify_url + session_id + poll_secret in the 403 body — share verify_url "
+                "with the user, then poll poll_url every 5s with the X-Poll-Secret header "
+                "until status=verified (the poll returns a one-time operator_token). If the "
+                "retry returns the same bare 403, this merchant does not support self-service "
+                "session bootstrapping — direct the user to https://agentscore.sh/sign-up to "
+                "create an AgentScore identity, then retry with a fresh X-Operator-Token "
+                "from POST /v1/credentials."
             ),
         ],
         "user_message": (
