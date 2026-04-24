@@ -42,9 +42,12 @@ def test_agent_memory_hint_strips_trailing_slash() -> None:
     assert hint.identity_check_endpoint == "https://api.agentscore.sh/v1/credentials"
 
 
-def test_agent_memory_hint_custom_base() -> None:
-    hint = build_agent_memory_hint("https://api.staging.agentscore.sh")
-    assert hint.identity_check_endpoint.startswith("https://api.staging.agentscore.sh")
+def test_agent_memory_hint_ignores_merchant_base_url() -> None:
+    # Sec1: memory pointers must always be the canonical AgentScore API to prevent
+    # malicious merchants from phishing agents via their own baseUrl configuration.
+    hint = build_agent_memory_hint("https://evil.example.com")
+    assert hint.identity_check_endpoint == "https://api.agentscore.sh/v1/credentials"
+    assert hint.list_wallets_endpoint == "https://api.agentscore.sh/v1/credentials/wallets"
 
 
 def test_agent_memory_hint_is_dataclass() -> None:
@@ -151,6 +154,41 @@ def test_verify_wallet_signer_match_different_operator_rejects() -> None:
     assert result.actual_signer == WALLET_B.lower()
 
 
+def test_verify_wallet_signer_match_transient_error_emits_api_error() -> None:
+    """Sec2: transient /v1/assess failures must NOT be conflated with wallet_signer_mismatch."""
+    client = GateClient(api_key=API_KEY)
+
+    def fake_post(*_args: object, **_kwargs: object) -> MagicMock:
+        resp = MagicMock()
+        resp.is_success = False
+        resp.status_code = 503
+        return resp
+
+    with patch.object(client._sync_client, "post", side_effect=fake_post):
+        result = client.verify_wallet_signer_match(
+            VerifyWalletSignerMatchOptions(claimed_wallet=WALLET_A, signer=WALLET_B),
+        )
+    assert result.kind == "api_error"
+    assert result.claimed_wallet == WALLET_A.lower()
+
+
+@pytest.mark.asyncio
+async def test_averify_wallet_signer_match_transient_error_emits_api_error() -> None:
+    client = GateClient(api_key=API_KEY)
+    from unittest.mock import AsyncMock
+
+    async def fake_apost(*_args: object, **_kwargs: object) -> MagicMock:
+        resp = MagicMock()
+        resp.is_success = False
+        return resp
+
+    client._async_client.post = AsyncMock(side_effect=fake_apost)
+    result = await client.averify_wallet_signer_match(
+        VerifyWalletSignerMatchOptions(claimed_wallet=WALLET_A, signer=WALLET_B),
+    )
+    assert result.kind == "api_error"
+
+
 def test_verify_wallet_signer_match_unlinked_signer_rejects() -> None:
     client = GateClient(api_key=API_KEY)
     operators = iter(["op_claimed", None])
@@ -208,7 +246,9 @@ async def test_asgi_verify_wallet_signer_match_no_op_on_operator_token_path() ->
 
     fake_client = AsyncMock()
     request = MagicMock()
-    request.scope = {"state": {GATE_STATE_KEY: {"client": fake_client, "operator_token": "opc_test", "wallet_address": None}}}
+    request.scope = {
+        "state": {GATE_STATE_KEY: {"client": fake_client, "operator_token": "opc_test", "wallet_address": None}},
+    }
 
     result = await verify_wallet_signer_match(request, signer="0xabc")
 

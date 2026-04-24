@@ -93,6 +93,9 @@ VerifyWalletSignerKind = Literal[
     "pass",
     "wallet_signer_mismatch",
     "wallet_auth_requires_wallet_signing",
+    # Transient — resolve call to /v1/assess failed or timed out. Caller should retry or
+    # surface 503 rather than reject the user as a signer mismatch on a network flake.
+    "api_error",
 ]
 
 
@@ -110,13 +113,20 @@ class VerifyWalletSignerResult:
     claimed_wallet: str | None = None
 
 
-def build_agent_memory_hint(base_url: str) -> AgentMemoryHint:
+# Canonical production AgentScore API — agent memory pointers are always hardcoded to this
+# value regardless of how a given merchant configured their gate. Prevents a malicious merchant
+# from emitting memory pointing agents at their own phishing endpoints.
+_CANONICAL_AGENTSCORE_API = "https://api.agentscore.sh"
+
+
+def build_agent_memory_hint(_base_url: str = "") -> AgentMemoryHint:
     """Build the cross-merchant memory hint emitted on bootstrap denials (TEC-227).
 
-    Pointers are derived from the gate's AgentScore API base URL so self-hosted /
-    staging deployments get correct endpoints.
+    ``_base_url`` is kept for backwards-compat but deliberately ignored — agent memory must
+    always point at the canonical production API to prevent cross-merchant phishing (a merchant
+    configuring a malicious baseUrl could otherwise redirect agents to evil.com).
     """
-    api = base_url.rstrip("/")
+    api = _CANONICAL_AGENTSCORE_API
     return AgentMemoryHint(
         save_for_future_agentscore_gates=True,
         pattern_summary=(
