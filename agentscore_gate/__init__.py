@@ -3,16 +3,22 @@
 from typing import Any
 
 from agentscore_gate.client import GateClient
+from agentscore_gate.signer import extract_x402_signer
 from agentscore_gate.types import (
     Activity,
     AgentIdentity,
+    AgentMemoryHint,
     AssessResult,
     Classification,
+    DenialCode,
     DenialReason,
     Grade,
     Identity,
     OperatorVerification,
     ScoreDetail,
+    VerifyWalletSignerMatchOptions,
+    VerifyWalletSignerResult,
+    build_agent_memory_hint,
 )
 
 
@@ -39,14 +45,20 @@ AgentScoreGate, CreateSessionOnMissing = _load_asgi_middleware()
 __all__ = [
     "Activity",
     "AgentIdentity",
+    "AgentMemoryHint",
     "AgentScoreGate",
     "AssessResult",
     "Classification",
     "CreateSessionOnMissing",
+    "DenialCode",
     "DenialReason",
     "GateClient",
     "Grade",
     "Identity",
     "OperatorVerification",
     "ScoreDetail",
+    "VerifyWalletSignerMatchOptions",
+    "VerifyWalletSignerResult",
+    "build_agent_memory_hint",
+    "extract_x402_signer",
 ]

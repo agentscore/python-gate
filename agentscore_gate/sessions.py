@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import httpx
 
-from agentscore_gate.types import DenialReason
+from agentscore_gate.types import DenialReason, build_agent_memory_hint
 
 logger = logging.getLogger("agentscore_gate")
 
@@ -99,6 +99,7 @@ def _apply_dynamic_options(body: dict[str, Any], dynamic: Any) -> dict[str, Any]
 def _session_denial_reason(
     data: dict[str, Any],
     extra: dict[str, Any] | None = None,
+    base_url: str = "https://api.agentscore.sh",
 ) -> DenialReason:
     return DenialReason(
         code="identity_verification_required",
@@ -107,6 +108,7 @@ def _session_denial_reason(
         poll_secret=data.get("poll_secret"),
         poll_url=data.get("poll_url"),
         agent_instructions=data.get("agent_instructions"),
+        agent_memory=build_agent_memory_hint(base_url),
         extra=extra,
     )
 
@@ -160,7 +162,7 @@ async def try_create_session_denial_reason(
             except Exception as err:
                 logger.warning("on_before_session hook failed: %s", err)
 
-        return _session_denial_reason(data, extra)
+        return _session_denial_reason(data, extra, cfg.base_url)
     except Exception:
         return None
 
@@ -211,7 +213,7 @@ def try_create_session_denial_reason_sync(
             except Exception as err:
                 logger.warning("on_before_session hook failed: %s", err)
 
-        return _session_denial_reason(data, extra)
+        return _session_denial_reason(data, extra, cfg.base_url)
     except Exception:
         return None
 

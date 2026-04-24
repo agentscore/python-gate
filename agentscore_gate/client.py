@@ -15,6 +15,8 @@ from agentscore_gate.types import (
     AssessResult,
     Network,
     OperatorVerification,
+    VerifyWalletSignerMatchOptions,
+    VerifyWalletSignerResult,
 )
 
 DEFAULT_BASE_URL = "https://api.agentscore.sh"
@@ -228,6 +230,111 @@ class GateClient:
                 headers=self._headers(),
                 content=json.dumps(body),
             )
+
+    # ------------------------------------------------------------------
+    # TEC-226 — wallet-auth signer binding
+    # ------------------------------------------------------------------
+
+    def _resolve_wallet_to_operator(self, wallet_address: str) -> str | None:
+        """Resolve a wallet to its operator id via /v1/assess. Returns None for unlinked wallets."""
+        key = f"resolve:{wallet_address.lower()}"
+        cached = self._cache.get(key)
+        if cached is not None:
+            raw = cached.raw or {}
+            op = raw.get("resolved_operator")
+            return op if isinstance(op, str) else None
+        try:
+            resp = self._sync_client.post(
+                f"{self._base_url}/v1/assess",
+                headers=self._headers(),
+                content=json.dumps({"address": wallet_address}),
+            )
+        except httpx.HTTPError:
+            return None
+        if not resp.is_success:
+            return None
+        data: dict[str, Any] = resp.json()
+        self._cache.set(key, AssessResult(allow=True, raw=data))
+        op = data.get("resolved_operator")
+        return op if isinstance(op, str) else None
+
+    async def _aresolve_wallet_to_operator(self, wallet_address: str) -> str | None:
+        key = f"resolve:{wallet_address.lower()}"
+        cached = self._cache.get(key)
+        if cached is not None:
+            raw = cached.raw or {}
+            op = raw.get("resolved_operator")
+            return op if isinstance(op, str) else None
+        try:
+            resp = await self._async_client.post(
+                f"{self._base_url}/v1/assess",
+                headers=self._headers(),
+                content=json.dumps({"address": wallet_address}),
+            )
+        except httpx.HTTPError:
+            return None
+        if not resp.is_success:
+            return None
+        data: dict[str, Any] = resp.json()
+        self._cache.set(key, AssessResult(allow=True, raw=data))
+        op = data.get("resolved_operator")
+        return op if isinstance(op, str) else None
+
+    def verify_wallet_signer_match(self, options: VerifyWalletSignerMatchOptions) -> VerifyWalletSignerResult:
+        """Verify payment signer resolves to the same operator as the claimed wallet (TEC-226).
+
+        Returns:
+            ``kind='pass'`` when the signer is the claimed wallet (byte-equal) or both resolve
+            to the same operator. ``kind='wallet_signer_mismatch'`` when operators differ.
+            ``kind='wallet_auth_requires_wallet_signing'`` when ``signer`` is ``None`` (SPT/card).
+        """
+        signer = options.signer
+        if signer is None:
+            return VerifyWalletSignerResult(
+                kind="wallet_auth_requires_wallet_signing",
+                claimed_wallet=options.claimed_wallet,
+            )
+        claimed = options.claimed_wallet.lower()
+        signer_lower = signer.lower()
+        if claimed == signer_lower:
+            return VerifyWalletSignerResult(kind="pass")
+        claimed_op = self._resolve_wallet_to_operator(claimed)
+        signer_op = self._resolve_wallet_to_operator(signer_lower)
+        if claimed_op and signer_op and claimed_op == signer_op:
+            return VerifyWalletSignerResult(kind="pass", claimed_operator=claimed_op, signer_operator=signer_op)
+        return VerifyWalletSignerResult(
+            kind="wallet_signer_mismatch",
+            claimed_operator=claimed_op,
+            actual_signer_operator=signer_op,
+            expected_signer=claimed,
+            actual_signer=signer_lower,
+            linked_wallets=[],
+        )
+
+    async def averify_wallet_signer_match(self, options: VerifyWalletSignerMatchOptions) -> VerifyWalletSignerResult:
+        """Async variant of :meth:`verify_wallet_signer_match`."""
+        signer = options.signer
+        if signer is None:
+            return VerifyWalletSignerResult(
+                kind="wallet_auth_requires_wallet_signing",
+                claimed_wallet=options.claimed_wallet,
+            )
+        claimed = options.claimed_wallet.lower()
+        signer_lower = signer.lower()
+        if claimed == signer_lower:
+            return VerifyWalletSignerResult(kind="pass")
+        claimed_op = await self._aresolve_wallet_to_operator(claimed)
+        signer_op = await self._aresolve_wallet_to_operator(signer_lower)
+        if claimed_op and signer_op and claimed_op == signer_op:
+            return VerifyWalletSignerResult(kind="pass", claimed_operator=claimed_op, signer_operator=signer_op)
+        return VerifyWalletSignerResult(
+            kind="wallet_signer_mismatch",
+            claimed_operator=claimed_op,
+            actual_signer_operator=signer_op,
+            expected_signer=claimed,
+            actual_signer=signer_lower,
+            linked_wallets=[],
+        )
 
 
 class PaymentRequiredError(Exception):
