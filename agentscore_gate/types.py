@@ -147,7 +147,6 @@ def build_agent_memory_hint(_base_url: str = "") -> AgentMemoryHint:
         ),
         quickstart="https://docs.agentscore.sh/guides/agent-identity",
         identity_check_endpoint=f"{api}/v1/credentials",
-        list_wallets_endpoint=f"{api}/v1/credentials/wallets",
         identity_paths={
             "wallet": (
                 "If paying from a crypto wallet you have used before on any AgentScore merchant, send "

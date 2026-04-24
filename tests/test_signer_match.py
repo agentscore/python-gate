@@ -32,7 +32,8 @@ def test_agent_memory_hint_has_core_fields() -> None:
     assert hint.save_for_future_agentscore_gates is True
     assert "AgentScore" in hint.pattern_summary
     assert hint.identity_check_endpoint == "https://api.agentscore.sh/v1/credentials"
-    assert hint.list_wallets_endpoint == "https://api.agentscore.sh/v1/credentials/wallets"
+    # list_wallets_endpoint is reserved for a future GET endpoint — not emitted today.
+    assert hint.list_wallets_endpoint is None
     assert "X-Wallet-Address" in hint.identity_paths["wallet"]
     assert "X-Operator-Token" in hint.identity_paths["operator_token"]
     assert "operator_token" in hint.do_not_persist_in_memory
@@ -48,7 +49,6 @@ def test_agent_memory_hint_ignores_merchant_base_url() -> None:
     # malicious merchants from phishing agents via their own baseUrl configuration.
     hint = build_agent_memory_hint("https://evil.example.com")
     assert hint.identity_check_endpoint == "https://api.agentscore.sh/v1/credentials"
-    assert hint.list_wallets_endpoint == "https://api.agentscore.sh/v1/credentials/wallets"
 
 
 def test_agent_memory_hint_is_dataclass() -> None:
