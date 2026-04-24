@@ -249,3 +249,45 @@ class TestCaptureWallet:
             _, resp = app.test_client.post("/purchase")
             assert resp.status == 200
         mock_capture.assert_not_awaited()
+
+
+def test_sanic_passes_through_token_expired():
+    from agentscore_gate.client import TokenDeniedError
+
+    app = Sanic("sanic_token_expired_test")
+    agentscore_gate(app, api_key="ak", fail_open=False)
+
+    @app.get("/")
+    async def index(_request):
+        return response.json({"ok": True})
+
+    with patch(
+        "agentscore_gate.sanic.GateClient.acheck_identity",
+        new=AsyncMock(side_effect=TokenDeniedError("token_expired", {"action": "mint_new_credential"})),
+    ):
+        _req, resp = app.test_client.get("/", headers={"x-operator-token": "opc_exp"})
+
+    assert resp.status == 403
+    body = resp.json
+    assert body["error"] == "token_expired"
+    import json as _json
+
+    assert _json.loads(body["agent_instructions"]) == {"action": "mint_new_credential"}
+
+
+def test_sanic_api_error_on_unexpected_exception():
+    app = Sanic("sanic_api_error_test")
+    agentscore_gate(app, api_key="ak", fail_open=False)
+
+    @app.get("/")
+    async def index(_request):
+        return response.json({"ok": True})
+
+    with patch(
+        "agentscore_gate.sanic.GateClient.acheck_identity",
+        new=AsyncMock(side_effect=RuntimeError("unexpected")),
+    ):
+        _req, resp = app.test_client.get("/", headers={"x-wallet-address": "0xabc"})
+
+    assert resp.status == 403
+    assert resp.json["error"] == "api_error"

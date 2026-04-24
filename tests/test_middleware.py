@@ -273,3 +273,119 @@ class TestCaptureWallet:
             capture_wallet(request, "0xsigner", "evm"),
         )
         assert capture_route.call_count == 0
+
+
+@respx.mock
+def test_middleware_surfaces_generic_api_error_on_unexpected_exception():
+    """When the assess client throws something other than PaymentRequired/TokenDenied,
+    the middleware emits a generic api_error denial (no payload/stack leaks)."""
+    respx.post(ASSESS_URL).mock(side_effect=httpx.ConnectError("dns lookup failed"))
+
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+
+    assert resp.status_code == 403
+    assert resp.json()["error"] == "api_error"
+
+
+@respx.mock
+def test_middleware_fail_open_on_unexpected_exception_lets_request_through():
+    respx.post(ASSESS_URL).mock(side_effect=httpx.ConnectError("dns lookup failed"))
+
+    app = _make_app(fail_open=True)
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+
+@respx.mock
+def test_middleware_passes_through_token_revoked_with_agent_instructions():
+    respx.post(ASSESS_URL).mock(
+        return_value=httpx.Response(
+            401,
+            json={
+                "error": {"code": "token_revoked", "message": "credential was revoked"},
+                "next_steps": {"action": "contact_support"},
+            },
+        )
+    )
+
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-operator-token": "opc_revoked"})
+
+    assert resp.status_code == 403
+    body = resp.json()
+    assert body["error"] == "token_revoked"
+    assert json.loads(body["agent_instructions"]) == {"action": "contact_support"}
+
+
+@respx.mock
+def test_middleware_passes_through_token_expired_without_next_steps():
+    respx.post(ASSESS_URL).mock(
+        return_value=httpx.Response(
+            401,
+            json={"error": {"code": "token_expired", "message": "expired"}},
+        )
+    )
+
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-operator-token": "opc_expired"})
+
+    assert resp.status_code == 403
+    body = resp.json()
+    assert body["error"] == "token_expired"
+    # next_steps absent → agent_instructions omitted entirely.
+    assert "agent_instructions" not in body
+
+
+@respx.mock
+def test_middleware_emits_wallet_not_trusted_on_policy_deny():
+    respx.post(ASSESS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "decision": "deny",
+                "decision_reasons": ["kyc_required"],
+                "verify_url": "https://agentscore.sh/verify",
+            },
+        )
+    )
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+
+    assert resp.status_code == 403
+    body = resp.json()
+    assert body["error"] == "wallet_not_trusted"
+    assert body["decision"] == "deny"
+    assert body["reasons"] == ["kyc_required"]
+    assert body["verify_url"] == "https://agentscore.sh/verify"
+
+
+@respx.mock
+def test_middleware_emits_payment_required_on_402():
+    respx.post(ASSESS_URL).mock(return_value=httpx.Response(402, json={}))
+
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+
+    assert resp.status_code == 403
+    assert resp.json()["error"] == "payment_required"
+
+
+@respx.mock
+def test_middleware_fail_open_on_402_lets_request_through():
+    respx.post(ASSESS_URL).mock(return_value=httpx.Response(402, json={}))
+
+    app = _make_app(fail_open=True)
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
