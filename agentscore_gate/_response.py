@@ -13,14 +13,16 @@ from typing import Any
 
 from agentscore_gate.types import DenialReason, build_agent_memory_hint
 
-_MISSING_IDENTITY_INSTRUCTIONS = json.dumps({
-    "action": "send_existing_identity",
-    "user_message": (
-        "If you have a stored operator_token or a wallet previously linked on any AgentScore "
-        "merchant, send it (X-Operator-Token or X-Wallet-Address) and retry. Otherwise, follow "
-        "the session/verify flow described in agent_memory.bootstrap."
-    ),
-})
+_MISSING_IDENTITY_INSTRUCTIONS = json.dumps(
+    {
+        "action": "send_existing_identity",
+        "user_message": (
+            "If you have a stored operator_token or a wallet previously linked on any AgentScore "
+            "merchant, send it (X-Operator-Token or X-Wallet-Address) and retry. Otherwise, follow "
+            "the session/verify flow described in agent_memory.bootstrap."
+        ),
+    }
+)
 
 
 def build_missing_identity_reason(base_url: str = "https://api.agentscore.sh") -> DenialReason:
