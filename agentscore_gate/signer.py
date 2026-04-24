@@ -1,4 +1,4 @@
-"""Payment-signer extraction (TEC-226).
+"""Payment-signer extraction.
 
 Pure-x402 extractor for Python. EIP-3009 payment credentials carry the signer at
 ``payload.authorization.from`` inside a base64-encoded JSON blob — no external deps.

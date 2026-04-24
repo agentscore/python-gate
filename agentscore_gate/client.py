@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
+import logging
 from importlib.metadata import version as _pkg_version
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -18,6 +18,8 @@ from agentscore_gate.types import (
     VerifyWalletSignerMatchOptions,
     VerifyWalletSignerResult,
 )
+
+_log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.agentscore.sh"
 DEFAULT_CACHE_SECONDS = 300
@@ -105,6 +107,20 @@ class GateClient:
         if resp.status_code == 402:
             raise PaymentRequiredError
 
+        if resp.status_code == 401:
+            # Pass through granular credential-state denials the API emits so agents
+            # can pick the right remediation (mint new vs. stop) without parsing prose.
+            try:
+                err_body = resp.json()
+            except (ValueError, json.JSONDecodeError):
+                err_body = {}
+            error = err_body.get("error") if isinstance(err_body, dict) else None
+            code = error.get("code") if isinstance(error, dict) else None
+            if code in ("token_expired", "token_revoked"):
+                raise TokenDeniedError(code, err_body.get("next_steps") if isinstance(err_body, dict) else None)
+            msg = f"AgentScore API returned {resp.status_code}"
+            raise RuntimeError(msg)
+
         if not resp.is_success:
             msg = f"AgentScore API returned {resp.status_code}"
             raise RuntimeError(msg)
@@ -190,7 +206,7 @@ class GateClient:
         network: Network,
         idempotency_key: str | None = None,
     ) -> None:
-        """Report a wallet seen paying under an operator credential (TEC-189).
+        """Report a wallet seen paying under an operator credential.
 
         Fire-and-forget: silently swallows non-fatal errors. ``idempotency_key`` (payment intent
         id, tx hash, …) lets the server dedupe agent retries of the same logical payment.
@@ -202,13 +218,16 @@ class GateClient:
         }
         if idempotency_key:
             body["idempotency_key"] = idempotency_key
-        # Silent — capture is fire-and-forget
-        with contextlib.suppress(Exception):
+        # Fire-and-forget: don't raise. Log so a persistent capture outage is visible
+        # to merchant ops — otherwise wallet↔operator linkage silently stops.
+        try:
             self._sync_client.post(
                 f"{self._base_url}/v1/credentials/wallets",
                 headers=self._headers(),
                 content=json.dumps(body),
             )
+        except Exception as err:
+            _log.warning("capture_wallet failed: %s", err)
 
     async def acapture_wallet(
         self,
@@ -225,16 +244,18 @@ class GateClient:
         }
         if idempotency_key:
             body["idempotency_key"] = idempotency_key
-        # Silent — capture is fire-and-forget
-        with contextlib.suppress(Exception):
+        # Fire-and-forget: don't raise. Log so a persistent capture outage is visible.
+        try:
             await self._async_client.post(
                 f"{self._base_url}/v1/credentials/wallets",
                 headers=self._headers(),
                 content=json.dumps(body),
             )
+        except Exception as err:
+            _log.warning("acapture_wallet failed: %s", err)
 
     # ------------------------------------------------------------------
-    # TEC-226 — wallet-auth signer binding
+    # Wallet-auth signer binding
     # ------------------------------------------------------------------
 
     def _resolve_from_cache(self, wallet: str) -> tuple[bool, str | None, list[str]]:
@@ -264,7 +285,7 @@ class GateClient:
         during identity evaluation.
 
         Returns ``(ok, operator, linked_wallets)``. ``linked_wallets`` is the set of wallets
-        sharing the same operator (both wallet-claim and TEC-189 capture); echoed back to
+        sharing the same operator (both wallet-claim and captured-signer links); echoed back to
         agents on ``wallet_signer_mismatch`` denials so they know which wallets they can
         legitimately sign with.
         """
@@ -311,8 +332,29 @@ class GateClient:
         linked = [w for w in linked_raw if isinstance(w, str)] if isinstance(linked_raw, list) else []
         return True, (op_value if isinstance(op_value, str) else None), linked
 
+    def _report_signer_event_sync(self, kind: str) -> None:
+        """Fire-and-forget telemetry post. Never raises."""
+        try:
+            self._sync_client.post(
+                f"{self._base_url}/v1/telemetry/signer-match",
+                headers=self._headers(),
+                content=json.dumps({"kind": kind}),
+            )
+        except Exception as err:
+            _log.warning("signer-match telemetry failed: %s", err)
+
+    async def _report_signer_event_async(self, kind: str) -> None:
+        try:
+            await self._async_client.post(
+                f"{self._base_url}/v1/telemetry/signer-match",
+                headers=self._headers(),
+                content=json.dumps({"kind": kind}),
+            )
+        except Exception as err:
+            _log.warning("signer-match telemetry failed: %s", err)
+
     def verify_wallet_signer_match(self, options: VerifyWalletSignerMatchOptions) -> VerifyWalletSignerResult:
-        """Verify payment signer resolves to the same operator as the claimed wallet (TEC-226).
+        """Verify payment signer resolves to the same operator as the claimed wallet.
 
         Returns:
             ``kind='pass'`` when the signer is the claimed wallet (byte-equal) or both resolve
@@ -323,6 +365,7 @@ class GateClient:
         """
         signer = options.signer
         if signer is None:
+            self._report_signer_event_sync("wallet_auth_requires_wallet_signing")
             return VerifyWalletSignerResult(
                 kind="wallet_auth_requires_wallet_signing",
                 claimed_wallet=options.claimed_wallet,
@@ -330,13 +373,17 @@ class GateClient:
         claimed = options.claimed_wallet.lower()
         signer_lower = signer.lower()
         if claimed == signer_lower:
+            self._report_signer_event_sync("pass")
             return VerifyWalletSignerResult(kind="pass")
         claimed_ok, claimed_op, claimed_links = self._resolve_wallet_to_operator(claimed)
         signer_ok, signer_op, _ = self._resolve_wallet_to_operator(signer_lower)
         if not claimed_ok or not signer_ok:
+            self._report_signer_event_sync("api_error")
             return VerifyWalletSignerResult(kind="api_error", claimed_wallet=claimed)
         if claimed_op and signer_op and claimed_op == signer_op:
+            self._report_signer_event_sync("pass")
             return VerifyWalletSignerResult(kind="pass", claimed_operator=claimed_op, signer_operator=signer_op)
+        self._report_signer_event_sync("wallet_signer_mismatch")
         return VerifyWalletSignerResult(
             kind="wallet_signer_mismatch",
             claimed_operator=claimed_op,
@@ -350,6 +397,7 @@ class GateClient:
         """Async variant of :meth:`verify_wallet_signer_match`."""
         signer = options.signer
         if signer is None:
+            await self._report_signer_event_async("wallet_auth_requires_wallet_signing")
             return VerifyWalletSignerResult(
                 kind="wallet_auth_requires_wallet_signing",
                 claimed_wallet=options.claimed_wallet,
@@ -357,13 +405,17 @@ class GateClient:
         claimed = options.claimed_wallet.lower()
         signer_lower = signer.lower()
         if claimed == signer_lower:
+            await self._report_signer_event_async("pass")
             return VerifyWalletSignerResult(kind="pass")
         claimed_ok, claimed_op, claimed_links = await self._aresolve_wallet_to_operator(claimed)
         signer_ok, signer_op, _ = await self._aresolve_wallet_to_operator(signer_lower)
         if not claimed_ok or not signer_ok:
+            await self._report_signer_event_async("api_error")
             return VerifyWalletSignerResult(kind="api_error", claimed_wallet=claimed)
         if claimed_op and signer_op and claimed_op == signer_op:
+            await self._report_signer_event_async("pass")
             return VerifyWalletSignerResult(kind="pass", claimed_operator=claimed_op, signer_operator=signer_op)
+        await self._report_signer_event_async("wallet_signer_mismatch")
         return VerifyWalletSignerResult(
             kind="wallet_signer_mismatch",
             claimed_operator=claimed_op,
@@ -376,3 +428,22 @@ class GateClient:
 
 class PaymentRequiredError(Exception):
     """Raised when the AgentScore API returns 402."""
+
+
+class TokenDeniedError(Exception):
+    """Raised when /v1/assess returns 401 with a granular credential-state denial.
+
+    Carries the specific code (``token_expired`` or ``token_revoked``) and any
+    ``next_steps`` block from the response body so the adapter can build a
+    DenialReason with agent-actionable guidance instead of collapsing to the
+    generic ``wallet_not_trusted``.
+    """
+
+    def __init__(
+        self,
+        code: Literal["token_expired", "token_revoked"],
+        next_steps: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(code)
+        self.code: Literal["token_expired", "token_revoked"] = code
+        self.next_steps = next_steps

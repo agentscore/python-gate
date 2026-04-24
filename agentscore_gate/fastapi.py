@@ -8,12 +8,13 @@ routes via ``dependencies=[Depends(gate)]`` and inject the assess result with
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from starlette.requests import Request  # noqa: TC002 - runtime import required for FastAPI DI
 
 from agentscore_gate._response import build_missing_identity_reason, denial_reason_to_body
-from agentscore_gate.client import GateClient, PaymentRequiredError
+from agentscore_gate.client import GateClient, PaymentRequiredError, TokenDeniedError
 from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason
 from agentscore_gate.types import (
     AgentIdentity,
@@ -162,6 +163,14 @@ class AgentScoreGate:
             if self._client.fail_open:
                 return
             self._deny(request, DenialReason(code="payment_required"))
+        except TokenDeniedError as err:
+            self._deny(
+                request,
+                DenialReason(
+                    code=err.code,
+                    agent_instructions=json.dumps(err.next_steps) if err.next_steps else None,
+                ),
+            )
         except Exception:
             if self._client.fail_open:
                 return
@@ -201,7 +210,7 @@ async def verify_wallet_signer_match(
     signer: str | None,
     network: Network = "evm",
 ) -> VerifyWalletSignerResult:
-    """Verify payment signer matches claimed X-Wallet-Address (TEC-226).
+    """Verify payment signer matches claimed X-Wallet-Address.
 
     No-ops when operator-token-authenticated or when both headers were sent. See
     :func:`agentscore_gate.middleware.verify_wallet_signer_match` for the full contract.

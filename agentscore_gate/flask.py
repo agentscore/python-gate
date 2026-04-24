@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from agentscore_gate._response import build_missing_identity_reason, denial_reason_to_body
-from agentscore_gate.client import GateClient, PaymentRequiredError
+from agentscore_gate.client import GateClient, PaymentRequiredError, TokenDeniedError
 from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason_sync
 from agentscore_gate.types import (
     AgentIdentity,
@@ -152,6 +153,17 @@ def agentscore_gate(
                 msg = "on_denied must return a (dict, int) tuple, e.g. ({'error': 'denied'}, 403)"
                 raise TypeError(msg) from exc
             return jsonify(body), status
+        except TokenDeniedError as err:
+            reason = DenialReason(
+                code=err.code,
+                agent_instructions=json.dumps(err.next_steps) if err.next_steps else None,
+            )
+            try:
+                body, status = _on_denied(flask_request, reason)
+            except (TypeError, ValueError) as exc:
+                msg = "on_denied must return a (dict, int) tuple, e.g. ({'error': 'denied'}, 403)"
+                raise TypeError(msg) from exc
+            return jsonify(body), status
         except TypeError:
             raise
         except Exception:
@@ -169,7 +181,7 @@ def verify_wallet_signer_match(
     signer: str | None,
     network: Network = "evm",
 ) -> VerifyWalletSignerResult:
-    """Verify payment signer matches claimed X-Wallet-Address (TEC-226).
+    """Verify payment signer matches claimed X-Wallet-Address.
 
     Reads gate state from Flask's ``g`` object. No-ops when operator-token-authenticated or
     when both headers were sent. See :func:`agentscore_gate.middleware.verify_wallet_signer_match`

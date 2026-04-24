@@ -18,10 +18,11 @@ DenialCode = Literal[
     "api_error",
     "payment_required",
     "identity_verification_required",
-    # Added in 1.9.0 (TEC-226)
+    # Wallet-signer binding: claimed X-Wallet-Address must resolve to the same operator as
+    # the payment signer; wallet-auth is rejected on rails with no wallet signer.
     "wallet_signer_mismatch",
     "wallet_auth_requires_wallet_signing",
-    # Added in 1.9.0 (TEC-218): passed through from /v1/assess granular denials.
+    # Granular credential-state denials passed through from /v1/assess.
     "token_expired",
     "token_revoked",
 ]
@@ -37,7 +38,7 @@ class AgentIdentity:
 
 @dataclass
 class AgentMemoryHint:
-    """Cross-merchant pattern hint emitted on bootstrap denials (TEC-227).
+    """Cross-merchant pattern hint emitted on bootstrap denials.
 
     LLM-hosted agents should persist this to long-term memory so future AgentScore
     encounters skip the cold-start session flow. Contents are the pattern, not
@@ -68,14 +69,14 @@ class DenialReason:
     poll_secret: str | None = None
     poll_url: str | None = None
     agent_instructions: str | None = None
-    # Cross-merchant memory hint (TEC-227). Emitted on bootstrap denials.
+    # Cross-merchant memory hint. Emitted on bootstrap denials.
     agent_memory: AgentMemoryHint | None = None
     # Extra fields returned from ``CreateSessionOnMissing.on_before_session`` hook.
     # Merged into the default 403 body; custom ``on_denied`` handlers can spread
     # these into their own response shape (e.g. to include a merchant-minted
     # ``order_id``). See ``agentscore_gate.sessions.CreateSessionOnMissing``.
     extra: dict[str, Any] | None = None
-    # TEC-226 wallet-signer-match fields (populated only for wallet_signer_mismatch).
+    # Wallet-signer-match fields (populated only for wallet_signer_mismatch).
     claimed_operator: str | None = None
     actual_signer_operator: str | None = None
     expected_signer: str | None = None
@@ -85,7 +86,7 @@ class DenialReason:
 
 @dataclass
 class VerifyWalletSignerMatchOptions:
-    """Input for GateClient.verify_wallet_signer_match (TEC-226)."""
+    """Input for GateClient.verify_wallet_signer_match."""
 
     claimed_wallet: str
     signer: str | None
@@ -104,7 +105,7 @@ VerifyWalletSignerKind = Literal[
 
 @dataclass
 class VerifyWalletSignerResult:
-    """Result of GateClient.verify_wallet_signer_match (TEC-226)."""
+    """Result of GateClient.verify_wallet_signer_match."""
 
     kind: VerifyWalletSignerKind
     claimed_operator: str | None = None
@@ -123,7 +124,7 @@ _CANONICAL_AGENTSCORE_API = "https://api.agentscore.sh"
 
 
 def build_agent_memory_hint(_base_url: str = "") -> AgentMemoryHint:
-    """Build the cross-merchant memory hint emitted on bootstrap denials (TEC-227).
+    """Build the cross-merchant memory hint emitted on bootstrap denials.
 
     ``_base_url`` is kept for backwards-compat but deliberately ignored — agent memory must
     always point at the canonical production API to prevent cross-merchant phishing (a merchant

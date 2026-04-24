@@ -1,4 +1,4 @@
-"""Tests for TEC-226 signer-match helpers and TEC-227 agent_memory hint."""
+"""Tests for the signer-match helpers and agent_memory hint."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import base64
 import json
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from agentscore_gate import (
@@ -22,7 +23,7 @@ WALLET_B = "0x2222222222222222222222222222222222222222"
 
 
 # ---------------------------------------------------------------------------
-# build_agent_memory_hint — TEC-227
+# build_agent_memory_hint
 # ---------------------------------------------------------------------------
 
 
@@ -91,7 +92,7 @@ def test_extract_x402_signer_rejects_non_evm() -> None:
 
 
 # ---------------------------------------------------------------------------
-# GateClient.verify_wallet_signer_match — TEC-226
+# GateClient.verify_wallet_signer_match
 # ---------------------------------------------------------------------------
 
 
@@ -220,12 +221,13 @@ async def test_averify_wallet_signer_match_byte_equal_pass() -> None:
 
 @pytest.mark.asyncio
 async def test_averify_wallet_signer_match_linked_wallets_threaded_through() -> None:
-    """TEC-226: async path surfaces linked_wallets from the claimed wallet's /v1/assess response."""
+    """Async path surfaces linked_wallets from the claimed wallet's /v1/assess response."""
     from unittest.mock import AsyncMock
 
     client = GateClient(api_key=API_KEY)
+    extra_wallet = "0xcccc000000000000000000000000000000000000"
     responses = iter([
-        {"resolved_operator": "op_claimed", "linked_wallets": [WALLET_A.lower(), "0xcccc000000000000000000000000000000000000"]},
+        {"resolved_operator": "op_claimed", "linked_wallets": [WALLET_A.lower(), extra_wallet]},
         {"resolved_operator": "op_signer", "linked_wallets": []},
     ])
 
@@ -254,8 +256,8 @@ async def test_averify_wallet_signer_match_requires_signing_on_null_signer() -> 
 
 
 # ---------------------------------------------------------------------------
-# Adapter wrapper tests — TEC-226 Section IV: token wins, signer check no-ops
-# when BOTH headers are sent. Also tests the new agent_memory body serialization.
+# Adapter wrapper tests — operator-token wins and the signer check no-ops when
+# BOTH headers are sent. Also exercises agent_memory body serialization.
 # ---------------------------------------------------------------------------
 
 
@@ -340,7 +342,7 @@ async def test_asgi_verify_wallet_signer_match_invokes_client_on_wallet_auth() -
 
 
 def test_denial_reason_to_body_includes_agent_memory() -> None:
-    """TEC-227: the shared serializer marshals agent_memory into the body dict."""
+    """The shared serializer marshals agent_memory into the body dict."""
     from agentscore_gate._response import denial_reason_to_body
     from agentscore_gate.types import DenialReason, build_agent_memory_hint
 
@@ -357,7 +359,7 @@ def test_denial_reason_to_body_includes_agent_memory() -> None:
 
 
 def test_denial_reason_to_body_includes_wallet_signer_mismatch_fields() -> None:
-    """TEC-226: the shared serializer marshals wallet-signer-match fields into the body."""
+    """The shared serializer marshals wallet-signer-match fields into the body."""
     from agentscore_gate._response import denial_reason_to_body
     from agentscore_gate.types import DenialReason
 
@@ -380,10 +382,356 @@ def test_denial_reason_to_body_includes_wallet_signer_mismatch_fields() -> None:
 
 
 def test_build_missing_identity_reason_attaches_memory_hint() -> None:
-    """TEC-227: the missing_identity builder attaches an agent_memory hint by default."""
+    """The missing_identity builder attaches an agent_memory hint by default."""
     from agentscore_gate._response import build_missing_identity_reason
 
     reason = build_missing_identity_reason("https://api.agentscore.sh")
     assert reason.code == "missing_identity"
     assert reason.agent_memory is not None
     assert reason.agent_memory.save_for_future_agentscore_gates is True
+
+
+# ---------------------------------------------------------------------------
+# Adapter parity — operator-token wins when both headers sent. Each adapter reads
+# gate state from a framework-specific location, so each needs its own no-op test.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fastapi_verify_wallet_signer_match_no_op_when_both_headers_sent() -> None:
+    from unittest.mock import AsyncMock
+
+    from agentscore_gate.fastapi import GATE_STATE_KEY, verify_wallet_signer_match
+
+    fake_client = AsyncMock()
+    request = MagicMock()
+    setattr(request.state, GATE_STATE_KEY, {
+        "client": fake_client,
+        "operator_token": "opc_test",
+        "wallet_address": WALLET_A,
+    })
+
+    result = await verify_wallet_signer_match(request, signer=WALLET_B)
+
+    assert result.kind == "pass"
+    fake_client.averify_wallet_signer_match.assert_not_called()
+
+
+def test_flask_verify_wallet_signer_match_no_op_when_both_headers_sent() -> None:
+    from flask import Flask
+
+    from agentscore_gate.flask import verify_wallet_signer_match
+
+    fake_client = MagicMock()
+    app = Flask(__name__)
+    with app.test_request_context("/"):
+        from flask import g
+
+        g._agentscore_gate = {  # type: ignore[attr-defined]
+            "client": fake_client,
+            "operator_token": "opc_test",
+            "wallet_address": WALLET_A,
+        }
+        result = verify_wallet_signer_match(signer=WALLET_B)
+
+    assert result.kind == "pass"
+    fake_client.verify_wallet_signer_match.assert_not_called()
+
+
+def test_django_verify_wallet_signer_match_no_op_when_both_headers_sent() -> None:
+    from agentscore_gate.django import verify_wallet_signer_match
+
+    fake_client = MagicMock()
+    request = MagicMock()
+    request._agentscore_gate = {
+        "client": fake_client,
+        "operator_token": "opc_test",
+        "wallet_address": WALLET_A,
+    }
+
+    result = verify_wallet_signer_match(request, signer=WALLET_B)
+
+    assert result.kind == "pass"
+    fake_client.verify_wallet_signer_match.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_aiohttp_verify_wallet_signer_match_no_op_when_both_headers_sent() -> None:
+    from unittest.mock import AsyncMock
+
+    from agentscore_gate.aiohttp import GATE_STATE_KEY, verify_wallet_signer_match
+
+    fake_client = AsyncMock()
+    request: dict[str, object] = {
+        GATE_STATE_KEY: {
+            "client": fake_client,
+            "operator_token": "opc_test",
+            "wallet_address": WALLET_A,
+        },
+    }
+
+    result = await verify_wallet_signer_match(request, signer=WALLET_B)  # type: ignore[arg-type]
+
+    assert result.kind == "pass"
+    fake_client.averify_wallet_signer_match.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sanic_verify_wallet_signer_match_no_op_when_both_headers_sent() -> None:
+    from unittest.mock import AsyncMock
+
+    from agentscore_gate.sanic import GATE_STATE_ATTR, verify_wallet_signer_match
+
+    fake_client = AsyncMock()
+    request = MagicMock()
+    setattr(request.ctx, GATE_STATE_ATTR, {
+        "client": fake_client,
+        "operator_token": "opc_test",
+        "wallet_address": WALLET_A,
+    })
+
+    result = await verify_wallet_signer_match(request, signer=WALLET_B)
+
+    assert result.kind == "pass"
+    fake_client.averify_wallet_signer_match.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Sync path linked_wallets threading — mirror of the async test above.
+# ---------------------------------------------------------------------------
+
+
+def test_verify_wallet_signer_match_linked_wallets_threaded_through_sync() -> None:
+    """Sync path surfaces linked_wallets from the claimed wallet's /v1/assess response."""
+    client = GateClient(api_key=API_KEY)
+    extra_wallet = "0xcccc000000000000000000000000000000000000"
+    responses = iter([
+        {"resolved_operator": "op_claimed", "linked_wallets": [WALLET_A.lower(), extra_wallet]},
+        {"resolved_operator": "op_signer", "linked_wallets": []},
+    ])
+
+    def fake_post(*_args: object, **_kwargs: object) -> MagicMock:
+        resp = MagicMock()
+        resp.is_success = True
+        resp.json.return_value = next(responses)
+        return resp
+
+    with patch.object(client._sync_client, "post", side_effect=fake_post):
+        result = client.verify_wallet_signer_match(
+            VerifyWalletSignerMatchOptions(claimed_wallet=WALLET_A, signer=WALLET_B),
+        )
+
+    assert result.kind == "wallet_signer_mismatch"
+    assert result.linked_wallets == [WALLET_A.lower(), extra_wallet]
+
+
+# ---------------------------------------------------------------------------
+# agent_memory gating — present on bootstrap denials, absent on everything else.
+# ---------------------------------------------------------------------------
+
+
+def test_denial_reason_to_body_omits_agent_memory_on_non_bootstrap_denial() -> None:
+    """wallet_signer_mismatch is post-identity — body must NOT carry an agent_memory hint."""
+    from agentscore_gate._response import denial_reason_to_body
+    from agentscore_gate.types import DenialReason
+
+    reason = DenialReason(
+        code="wallet_signer_mismatch",
+        claimed_operator="op_claimed",
+        actual_signer_operator="op_signer",
+        expected_signer=WALLET_A.lower(),
+        actual_signer=WALLET_B.lower(),
+        linked_wallets=[WALLET_A.lower()],
+    )
+    body = denial_reason_to_body(reason)
+
+    assert body["error"] == "wallet_signer_mismatch"
+    assert "agent_memory" not in body
+
+
+def test_denial_reason_to_body_omits_agent_memory_on_wallet_not_trusted() -> None:
+    """wallet_not_trusted is also post-identity; no agent_memory hint in the body."""
+    from agentscore_gate._response import denial_reason_to_body
+    from agentscore_gate.types import DenialReason
+
+    body = denial_reason_to_body(DenialReason(code="wallet_not_trusted"))
+    assert body["error"] == "wallet_not_trusted"
+    assert "agent_memory" not in body
+
+
+# ---------------------------------------------------------------------------
+# 401 granular credential-state denials — pass through as token_expired /
+# token_revoked so agents pick the right remediation without prose parsing.
+# ---------------------------------------------------------------------------
+
+
+def _mock_401(code: str, next_steps: dict[str, object] | None = None) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = 401
+    resp.is_success = False
+    body: dict[str, object] = {"error": {"code": code, "message": f"test {code}"}}
+    if next_steps is not None:
+        body["next_steps"] = next_steps
+    resp.json.return_value = body
+    return resp
+
+
+def test_check_raises_token_denied_on_401_expired() -> None:
+    from agentscore_gate.client import TokenDeniedError
+
+    client = GateClient(api_key=API_KEY)
+    mock_resp = _mock_401("token_expired", {"action": "mint_new_credential"})
+    with patch.object(client._sync_client, "post", return_value=mock_resp):
+        try:
+            client.check(operator_token="opc_expired")
+        except TokenDeniedError as err:
+            assert err.code == "token_expired"
+            assert err.next_steps == {"action": "mint_new_credential"}
+        else:
+            pytest.fail("expected TokenDeniedError")
+
+
+def test_check_raises_token_denied_on_401_revoked() -> None:
+    from agentscore_gate.client import TokenDeniedError
+
+    client = GateClient(api_key=API_KEY)
+    with patch.object(client._sync_client, "post", return_value=_mock_401("token_revoked")):
+        try:
+            client.check(operator_token="opc_revoked")
+        except TokenDeniedError as err:
+            assert err.code == "token_revoked"
+            assert err.next_steps is None
+        else:
+            pytest.fail("expected TokenDeniedError")
+
+
+def test_check_raises_runtime_error_on_401_unknown_code() -> None:
+    """401 with an unrecognized error code falls through to generic RuntimeError, not TokenDeniedError."""
+    from agentscore_gate.client import TokenDeniedError
+
+    client = GateClient(api_key=API_KEY)
+    with patch.object(client._sync_client, "post", return_value=_mock_401("something_else")):
+        try:
+            client.check(operator_token="opc_odd")
+        except TokenDeniedError:
+            pytest.fail("should not be raised for unknown 401 code")
+        except RuntimeError as err:
+            assert "401" in str(err)
+
+
+@pytest.mark.asyncio
+async def test_acheck_raises_token_denied_on_401() -> None:
+    from unittest.mock import AsyncMock
+
+    from agentscore_gate.client import TokenDeniedError
+
+    client = GateClient(api_key=API_KEY)
+    client._async_client.post = AsyncMock(return_value=_mock_401("token_expired"))
+    try:
+        await client.acheck(operator_token="opc_expired")
+    except TokenDeniedError as err:
+        assert err.code == "token_expired"
+    else:
+        pytest.fail("expected TokenDeniedError")
+
+
+def test_asgi_middleware_surfaces_token_denied_as_granular_denial() -> None:
+    """Integration: ASGI middleware catches TokenDeniedError → DenialReason(code=token_expired)."""
+    import httpx
+    import respx
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+    from starlette.testclient import TestClient
+
+    from agentscore_gate.middleware import AgentScoreGate
+
+    def _homepage(_request: object) -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    app = Starlette(routes=[Route("/", _homepage)])
+    gated = AgentScoreGate(app, api_key=API_KEY)
+
+    with respx.mock:
+        respx.post("https://api.agentscore.sh/v1/assess").mock(
+            return_value=httpx.Response(
+                401,
+                json={
+                    "error": {"code": "token_expired", "message": "credential has expired"},
+                    "next_steps": {"action": "mint_new_credential"},
+                },
+            ),
+        )
+        client = TestClient(gated, raise_server_exceptions=False)
+        res = client.get("/", headers={"x-operator-token": "opc_expired"})
+
+    assert res.status_code == 403
+    body = res.json()
+    assert body["error"] == "token_expired"
+    # agent_instructions is a JSON string of next_steps
+    assert json.loads(body["agent_instructions"]) == {"action": "mint_new_credential"}
+
+
+# ---------------------------------------------------------------------------
+# Signer-match telemetry — fire-and-forget POST to /v1/telemetry/signer-match
+# ---------------------------------------------------------------------------
+
+
+def test_verify_wallet_signer_match_posts_pass_telemetry() -> None:
+    client = GateClient(api_key=API_KEY)
+    telemetry_calls: list[str] = []
+
+    def capture(url: str, **kwargs: object) -> MagicMock:
+        if "/v1/telemetry/signer-match" in url:
+            body = json.loads(kwargs["content"])  # type: ignore[arg-type]
+            telemetry_calls.append(body["kind"])
+        resp = MagicMock()
+        resp.is_success = True
+        resp.status_code = 201
+        resp.json.return_value = {}
+        return resp
+
+    with patch.object(client._sync_client, "post", side_effect=capture):
+        result = client.verify_wallet_signer_match(
+            VerifyWalletSignerMatchOptions(claimed_wallet=WALLET_A, signer=WALLET_A),
+        )
+
+    assert result.kind == "pass"
+    assert telemetry_calls == ["pass"]
+
+
+def test_verify_wallet_signer_match_posts_requires_signing_telemetry() -> None:
+    client = GateClient(api_key=API_KEY)
+    telemetry_calls: list[str] = []
+
+    def capture(url: str, **kwargs: object) -> MagicMock:
+        if "/v1/telemetry/signer-match" in url:
+            body = json.loads(kwargs["content"])  # type: ignore[arg-type]
+            telemetry_calls.append(body["kind"])
+        resp = MagicMock()
+        resp.is_success = True
+        resp.status_code = 201
+        resp.json.return_value = {}
+        return resp
+
+    with patch.object(client._sync_client, "post", side_effect=capture):
+        client.verify_wallet_signer_match(
+            VerifyWalletSignerMatchOptions(claimed_wallet=WALLET_A, signer=None),
+        )
+
+    assert telemetry_calls == ["wallet_auth_requires_wallet_signing"]
+
+
+def test_verify_wallet_signer_match_telemetry_failure_does_not_raise() -> None:
+    """Gate decision must not depend on telemetry availability."""
+    client = GateClient(api_key=API_KEY)
+
+    def raiser(*_args: object, **_kwargs: object) -> MagicMock:
+        raise httpx.HTTPError("telemetry outage")
+
+    with patch.object(client._sync_client, "post", side_effect=raiser):
+        # byte-equal short-circuit returns pass; telemetry failure is swallowed.
+        result = client.verify_wallet_signer_match(
+            VerifyWalletSignerMatchOptions(claimed_wallet=WALLET_A, signer=WALLET_A),
+        )
+    assert result.kind == "pass"

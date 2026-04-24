@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from django.http import HttpRequest, JsonResponse
 
 from agentscore_gate._response import build_missing_identity_reason, denial_reason_to_body
-from agentscore_gate.client import GateClient, PaymentRequiredError
+from agentscore_gate.client import GateClient, PaymentRequiredError, TokenDeniedError
 from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason_sync
 from agentscore_gate.types import (
     AgentIdentity,
@@ -133,6 +134,12 @@ class AgentScoreMiddleware:
             if self._client.fail_open:
                 return self.get_response(request)
             return self._on_denied(request, DenialReason(code="payment_required"))
+        except TokenDeniedError as err:
+            reason = DenialReason(
+                code=err.code,
+                agent_instructions=json.dumps(err.next_steps) if err.next_steps else None,
+            )
+            return self._on_denied(request, reason)
         except Exception:
             if self._client.fail_open:
                 return self.get_response(request)
@@ -144,7 +151,7 @@ def verify_wallet_signer_match(
     signer: str | None,
     network: Network = "evm",
 ) -> VerifyWalletSignerResult:
-    """Verify payment signer matches claimed X-Wallet-Address (TEC-226).
+    """Verify payment signer matches claimed X-Wallet-Address.
 
     No-ops when operator-token-authenticated or when both headers were sent. See
     :func:`agentscore_gate.middleware.verify_wallet_signer_match` for the full contract.
