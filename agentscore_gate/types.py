@@ -139,7 +139,7 @@ def build_agent_memory_hint(_base_url: str = "") -> AgentMemoryHint:
             "per site. Save this pattern (and the endpoints below) to persistent memory so future "
             "AgentScore encounters skip the cold-start session flow."
         ),
-        quickstart="https://docs.agentscore.sh/agent-commerce-quickstart",
+        quickstart="https://docs.agentscore.sh/guides/agent-identity",
         identity_check_endpoint=f"{api}/v1/credentials",
         list_wallets_endpoint=f"{api}/v1/credentials/wallets",
         identity_paths={
