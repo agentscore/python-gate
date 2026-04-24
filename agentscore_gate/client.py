@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from importlib.metadata import version as _pkg_version
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 
@@ -22,6 +22,9 @@ from agentscore_gate.types import (
     VerifyWalletSignerMatchOptions,
     VerifyWalletSignerResult,
 )
+
+if TYPE_CHECKING:
+    from agentscore_gate.types import DenialReason
 
 _log = logging.getLogger(__name__)
 
@@ -112,16 +115,17 @@ class GateClient:
             raise PaymentRequiredError
 
         if resp.status_code == 401:
-            # Pass through granular credential-state denials the API emits so agents
-            # can pick the right remediation (mint new vs. stop) without parsing prose.
+            # Pass through the API's token_expired 401 (covers both expired and revoked
+            # credentials — API deliberately doesn't distinguish). The 401 body carries
+            # an auto-minted session so agents recover without an API key.
             try:
                 err_body = resp.json()
             except (ValueError, json.JSONDecodeError):
                 err_body = {}
             error = err_body.get("error") if isinstance(err_body, dict) else None
             code = error.get("code") if isinstance(error, dict) else None
-            if code in ("token_expired", "token_revoked"):
-                raise TokenDeniedError(code, err_body.get("next_steps") if isinstance(err_body, dict) else None)
+            if code == "token_expired":
+                raise TokenDeniedError(err_body if isinstance(err_body, dict) else {})
             msg = f"AgentScore API returned {resp.status_code}"
             raise RuntimeError(msg)
 
@@ -439,19 +443,35 @@ class PaymentRequiredError(Exception):
 
 
 class TokenDeniedError(Exception):
-    """Raised when /v1/assess returns 401 with a granular credential-state denial.
+    """Raised when /v1/assess returns 401 token_expired.
 
-    Carries the specific code (``token_expired`` or ``token_revoked``) and any
-    ``next_steps`` block from the response body so the adapter can build a
-    DenialReason with agent-actionable guidance instead of collapsing to the
-    generic ``wallet_not_trusted``.
+    Covers both revoked and TTL-expired credentials — the API deliberately doesn't
+    disclose which. Carries the full response body so the adapter can forward the
+    auto-minted session fields (verify_url, session_id, poll_secret, poll_url,
+    next_steps, agent_memory) to the agent instead of collapsing to wallet_not_trusted.
     """
 
-    def __init__(
-        self,
-        code: Literal["token_expired", "token_revoked"],
-        next_steps: dict[str, Any] | None = None,
-    ) -> None:
-        super().__init__(code)
-        self.code: Literal["token_expired", "token_revoked"] = code
-        self.next_steps = next_steps
+    def __init__(self, body: dict[str, Any]) -> None:
+        super().__init__("token_expired")
+        self.code: Literal["token_expired"] = "token_expired"
+        self.body: dict[str, Any] = body
+        # Legacy accessor for callers that read .next_steps directly.
+        self.next_steps = body.get("next_steps") if isinstance(body, dict) else None
+
+
+def build_token_denied_reason(err: TokenDeniedError) -> DenialReason:
+    """Project a TokenDeniedError into a DenialReason with forwarded auto-session fields.
+
+    Every adapter's 403 body then surfaces verify_url + poll data identically to bootstrap.
+    """
+    from agentscore_gate.types import DenialReason
+
+    body = err.body
+    return DenialReason(
+        code=err.code,
+        verify_url=body.get("verify_url") if isinstance(body.get("verify_url"), str) else None,
+        session_id=body.get("session_id") if isinstance(body.get("session_id"), str) else None,
+        poll_secret=body.get("poll_secret") if isinstance(body.get("poll_secret"), str) else None,
+        poll_url=body.get("poll_url") if isinstance(body.get("poll_url"), str) else None,
+        agent_instructions=json.dumps(err.next_steps) if err.next_steps else None,
+    )

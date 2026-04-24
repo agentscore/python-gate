@@ -9,7 +9,7 @@ All adapters (ASGI, FastAPI, Flask, Django, AIOHTTP, Sanic) support two identity
 - **Wallet address** — `X-Wallet-Address` header
 - **Operator token** — `X-Operator-Token` header
 
-Default checks `X-Operator-Token` first, then `X-Wallet-Address`. Types: `AgentIdentity`, `CreateSessionOnMissing` (shared from `agentscore_gate.sessions`), `DenialReason` (codes: `missing_identity`, `identity_verification_required`, `token_expired`, `token_revoked`, `wallet_signer_mismatch`, `wallet_auth_requires_wallet_signing`, `wallet_not_trusted`, `api_error`, `payment_required`), `VerifyWalletSignerMatchOptions`, `VerifyWalletSignerResult`. Client methods: `check_identity()`, `acheck_identity()`, `verify_wallet_signer_match()`, `averify_wallet_signer_match()`.
+Default checks `X-Operator-Token` first, then `X-Wallet-Address`. Types: `AgentIdentity`, `CreateSessionOnMissing` (shared from `agentscore_gate.sessions`), `DenialReason` (codes: `missing_identity`, `identity_verification_required`, `token_expired`, `wallet_signer_mismatch`, `wallet_auth_requires_wallet_signing`, `wallet_not_trusted`, `api_error`, `payment_required` — `token_expired` unifies revoked + TTL-expired so the API doesn't disclose the user's revoke intent), `VerifyWalletSignerMatchOptions`, `VerifyWalletSignerResult`. Client methods: `check_identity()`, `acheck_identity()`, `verify_wallet_signer_match()`, `averify_wallet_signer_match()`.
 
 `create_session_on_missing` is supported on every adapter — when set and no identity found, it creates a verification session and returns 403 with verify_url + poll instructions. Sync-path adapters (Flask/Django) use `try_create_session_denial_reason_sync`; async-path adapters use the async variant. Two optional hooks let merchants inject per-request context: `get_session_options(ctx)` overrides context/product_name per request, and `on_before_session(ctx, session)` runs a side effect after the session mints with its return dict merged into `DenialReason.extra` (surfaces in the 403 body). Both hooks accept sync or `async def` callables (detected via `inspect.iscoroutine`); sync-only adapters skip async hooks with a warning. Hook errors are swallowed with a log.
 
@@ -24,7 +24,7 @@ Every gate-emitted denial carries an `agent_instructions` JSON string (`{action,
 - `missing_identity` → `probe_identity_then_session` (try wallet on signing rails, fall back to opc_..., fall back to session flow)
 - `wallet_signer_mismatch` → `resign_or_switch_to_operator_token` (re-sign from `expected_signer` / any `linked_wallets`, or drop the wallet header and use opc_...)
 - `wallet_auth_requires_wallet_signing` → `switch_to_operator_token` (non-signing rail; drop wallet header)
-- `token_expired` / `token_revoked` — API emits `next_steps` and the middleware stringifies it as `agent_instructions` on pass-through.
+- `token_expired` — API emits an auto-minted session in the 401 body (verify_url + session_id + poll_secret + next_steps); middleware forwards via `build_token_denied_reason(err)` so the 403 carries everything the agent needs to recover. Covers revoked + TTL-expired transparently.
 
 Convention matches the API's structured `next_steps` responses (same `{action, user_message}` shape, wrapped as a JSON string inside `agent_instructions`). `user_message` lives inside — never duplicated at top level.
 

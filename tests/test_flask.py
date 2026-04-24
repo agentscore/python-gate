@@ -429,13 +429,23 @@ class TestFlaskChainOption:
 class TestFlaskTokenDenied:
     """Flask adapter handles granular 401 denial codes from /v1/assess."""
 
-    def test_passes_through_token_revoked(self) -> None:
+    def test_passes_through_token_expired_with_auto_session(self) -> None:
+        # Revoked and expired credentials both surface as token_expired; adapter forwards
+        # the API's auto-minted session fields into the 403 body.
         from agentscore_gate.client import TokenDeniedError
 
         app = _make_app()
         with patch(
             "agentscore_gate.flask.GateClient.check",
-            side_effect=TokenDeniedError("token_revoked", {"action": "contact_support"}),
+            side_effect=TokenDeniedError(
+                {
+                    "error": {"code": "token_expired", "message": "invalid"},
+                    "session_id": "sess_flask",
+                    "poll_secret": "poll_flask",
+                    "verify_url": "https://agentscore.sh/verify?session=sess_flask",
+                    "next_steps": {"action": "deliver_verify_url_and_poll"},
+                }
+            ),
         ):
             client = app.test_client()
             resp = client.get("/", headers={"x-operator-token": "opc_revoked"})
@@ -444,8 +454,10 @@ class TestFlaskTokenDenied:
         import json as _json
 
         body = resp.get_json()
-        assert body["error"] == "token_revoked"
-        assert _json.loads(body["agent_instructions"]) == {"action": "contact_support"}
+        assert body["error"] == "token_expired"
+        assert body["session_id"] == "sess_flask"
+        assert body["poll_secret"] == "poll_flask"
+        assert _json.loads(body["agent_instructions"]) == {"action": "deliver_verify_url_and_poll"}
 
     def test_passes_through_token_expired_without_next_steps(self) -> None:
         from agentscore_gate.client import TokenDeniedError
@@ -453,7 +465,7 @@ class TestFlaskTokenDenied:
         app = _make_app()
         with patch(
             "agentscore_gate.flask.GateClient.check",
-            side_effect=TokenDeniedError("token_expired", None),
+            side_effect=TokenDeniedError({"error": {"code": "token_expired", "message": "invalid"}}),
         ):
             client = app.test_client()
             resp = client.get("/", headers={"x-operator-token": "opc_expired"})
@@ -535,7 +547,7 @@ class TestFlaskBadOnDenied:
         app = _make_app(on_denied=lambda _req, _reason: 42)
         with patch(
             "agentscore_gate.flask.GateClient.check",
-            side_effect=TokenDeniedError("token_expired"),
+            side_effect=TokenDeniedError({"error": {"code": "token_expired"}}),
         ):
             client = app.test_client()
             with pytest.raises(TypeError, match="on_denied must return"):

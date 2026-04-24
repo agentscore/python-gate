@@ -22,9 +22,10 @@ DenialCode = Literal[
     # the payment signer; wallet-auth is rejected on rails with no wallet signer.
     "wallet_signer_mismatch",
     "wallet_auth_requires_wallet_signing",
-    # Granular credential-state denials passed through from /v1/assess.
+    # Credential is no longer valid (revoked or TTL-expired — the two cases share this
+    # code deliberately; the API doesn't disclose which). The 401 body carries an
+    # auto-minted session so the agent recovers without an API key.
     "token_expired",
-    "token_revoked",
 ]
 
 

@@ -601,8 +601,9 @@ def test_denial_reason_to_body_omits_agent_memory_on_wallet_not_trusted() -> Non
 
 
 # ---------------------------------------------------------------------------
-# 401 granular credential-state denials — pass through as token_expired /
-# token_revoked so agents pick the right remediation without prose parsing.
+# 401 token_expired pass-through — covers both revoked and TTL-expired credentials
+# (API deliberately doesn't disclose which). The 401 body carries an auto-minted
+# session so agents recover without an API key.
 # ---------------------------------------------------------------------------
 
 
@@ -621,26 +622,28 @@ def test_check_raises_token_denied_on_401_expired() -> None:
     from agentscore_gate.client import TokenDeniedError
 
     client = GateClient(api_key=API_KEY)
-    mock_resp = _mock_401("token_expired", {"action": "mint_new_credential"})
+    mock_resp = _mock_401("token_expired", {"action": "deliver_verify_url_and_poll"})
     with patch.object(client._sync_client, "post", return_value=mock_resp):
         try:
             client.check(operator_token="opc_expired")
         except TokenDeniedError as err:
             assert err.code == "token_expired"
-            assert err.next_steps == {"action": "mint_new_credential"}
+            assert err.next_steps == {"action": "deliver_verify_url_and_poll"}
         else:
             pytest.fail("expected TokenDeniedError")
 
 
 def test_check_raises_token_denied_on_401_revoked() -> None:
+    # Revoked credentials surface to the client as the same token_expired code — the API
+    # deliberately doesn't disclose which case (revoked vs TTL-expired) to the gate.
     from agentscore_gate.client import TokenDeniedError
 
     client = GateClient(api_key=API_KEY)
-    with patch.object(client._sync_client, "post", return_value=_mock_401("token_revoked")):
+    with patch.object(client._sync_client, "post", return_value=_mock_401("token_expired")):
         try:
             client.check(operator_token="opc_revoked")
         except TokenDeniedError as err:
-            assert err.code == "token_revoked"
+            assert err.code == "token_expired"
             assert err.next_steps is None
         else:
             pytest.fail("expected TokenDeniedError")

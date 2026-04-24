@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
 from agentscore_gate._response import build_missing_identity_reason, denial_reason_to_body
-from agentscore_gate.client import GateClient, PaymentRequiredError, TokenDeniedError
+from agentscore_gate.client import GateClient, PaymentRequiredError, TokenDeniedError, build_token_denied_reason
 from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason_sync
 from agentscore_gate.types import (
     AgentIdentity,
@@ -154,10 +153,7 @@ def agentscore_gate(
                 raise TypeError(msg) from exc
             return jsonify(body), status
         except TokenDeniedError as err:
-            reason = DenialReason(
-                code=err.code,
-                agent_instructions=json.dumps(err.next_steps) if err.next_steps else None,
-            )
+            reason = build_token_denied_reason(err)
             try:
                 body, status = _on_denied(flask_request, reason)
             except (TypeError, ValueError) as exc:

@@ -309,13 +309,20 @@ def test_middleware_fail_open_on_unexpected_exception_lets_request_through():
 
 
 @respx.mock
-def test_middleware_passes_through_token_revoked_with_agent_instructions():
+def test_middleware_passes_through_token_expired_with_auto_session():
+    # Revoked and expired credentials both surface as token_expired from the API with an
+    # auto-minted session in the 401 body. Middleware forwards all session fields so the
+    # 403 downstream carries verify_url + session_id + poll_secret for agent recovery.
     respx.post(ASSESS_URL).mock(
         return_value=httpx.Response(
             401,
             json={
-                "error": {"code": "token_revoked", "message": "credential was revoked"},
-                "next_steps": {"action": "contact_support"},
+                "error": {"code": "token_expired", "message": "invalid"},
+                "session_id": "sess_auto",
+                "poll_secret": "poll_auto",
+                "verify_url": "https://agentscore.sh/verify?session=sess_auto",
+                "poll_url": "https://api.agentscore.sh/v1/sessions/sess_auto",
+                "next_steps": {"action": "deliver_verify_url_and_poll"},
             },
         )
     )
@@ -326,8 +333,11 @@ def test_middleware_passes_through_token_revoked_with_agent_instructions():
 
     assert resp.status_code == 403
     body = resp.json()
-    assert body["error"] == "token_revoked"
-    assert json.loads(body["agent_instructions"]) == {"action": "contact_support"}
+    assert body["error"] == "token_expired"
+    assert body["session_id"] == "sess_auto"
+    assert body["poll_secret"] == "poll_auto"
+    assert body["verify_url"] == "https://agentscore.sh/verify?session=sess_auto"
+    assert json.loads(body["agent_instructions"]) == {"action": "deliver_verify_url_and_poll"}
 
 
 @respx.mock
