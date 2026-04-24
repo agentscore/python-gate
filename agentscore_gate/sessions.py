@@ -101,7 +101,18 @@ def _session_denial_reason(
     data: dict[str, Any],
     extra: dict[str, Any] | None = None,
     base_url: str = "https://api.agentscore.sh",
-) -> DenialReason:
+) -> DenialReason | None:
+    # Validate required fields before trusting the response. A misbehaving (or
+    # mocked-wrong) API could 200 without session_id/poll_secret/verify_url, which
+    # would propagate None into the 403 body and leave the agent stuck — treat that
+    # as a session-create failure and let the caller fall back to missing_identity.
+    if not (
+        isinstance(data.get("session_id"), str)
+        and isinstance(data.get("poll_secret"), str)
+        and isinstance(data.get("verify_url"), str)
+    ):
+        logger.warning("/v1/sessions returned 200 without required fields — treating as failure")
+        return None
     # The API emits structured ``next_steps`` on /v1/sessions success. Stringify it into
     # the gate's ``agent_instructions`` contract so every denial body surfaces the same
     # JSON-encoded {action, steps, user_message} envelope.
@@ -109,9 +120,9 @@ def _session_denial_reason(
     agent_instructions = json.dumps(next_steps) if next_steps else None
     return DenialReason(
         code="identity_verification_required",
-        verify_url=data.get("verify_url"),
-        session_id=data.get("session_id"),
-        poll_secret=data.get("poll_secret"),
+        verify_url=data["verify_url"],
+        session_id=data["session_id"],
+        poll_secret=data["poll_secret"],
         poll_url=data.get("poll_url"),
         agent_instructions=agent_instructions,
         agent_memory=build_agent_memory_hint(base_url),
