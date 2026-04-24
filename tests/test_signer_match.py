@@ -393,6 +393,24 @@ def test_build_missing_identity_reason_attaches_memory_hint() -> None:
     assert reason.agent_memory.save_for_future_agentscore_gates is True
 
 
+def test_build_missing_identity_reason_hints_send_existing_identity() -> None:
+    """Bootstrap denial carries agent_instructions with action=send_existing_identity so
+    returning agents try a stored credential before running the session flow."""
+    from agentscore_gate._response import build_missing_identity_reason, denial_reason_to_body
+
+    reason = build_missing_identity_reason("https://api.agentscore.sh")
+    assert reason.agent_instructions is not None
+
+    instructions = json.loads(reason.agent_instructions)
+    assert instructions["action"] == "send_existing_identity"
+    assert "X-Operator-Token" in instructions["user_message"] or "X-Wallet-Address" in instructions["user_message"]
+
+    # Shows up in the serialized body.
+    body = denial_reason_to_body(reason)
+    body_instructions = json.loads(body["agent_instructions"])
+    assert body_instructions["action"] == "send_existing_identity"
+
+
 # ---------------------------------------------------------------------------
 # Adapter parity — operator-token wins when both headers sent. Each adapter reads
 # gate state from a framework-specific location, so each needs its own no-op test.

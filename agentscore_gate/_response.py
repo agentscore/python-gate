@@ -7,19 +7,35 @@ Includes the wallet-signer-match fields and the agent_memory payload.
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from typing import Any
 
 from agentscore_gate.types import DenialReason, build_agent_memory_hint
+
+_MISSING_IDENTITY_INSTRUCTIONS = json.dumps({
+    "action": "send_existing_identity",
+    "user_message": (
+        "If you have a stored operator_token or a wallet previously linked on any AgentScore "
+        "merchant, send it (X-Operator-Token or X-Wallet-Address) and retry. Otherwise, follow "
+        "the session/verify flow described in agent_memory.bootstrap."
+    ),
+})
 
 
 def build_missing_identity_reason(base_url: str = "https://api.agentscore.sh") -> DenialReason:
     """Construct a missing_identity DenialReason with the cross-merchant memory hint attached.
 
     Emitted when the adapter has no identity AND no create_session_on_missing config — this is the
-    cold-start bootstrap path where the memory hint is most useful.
+    cold-start bootstrap path where the memory hint is most useful. The attached agent_instructions
+    hint the agent to try stored identity (returning-customer fast path) before running the
+    session/verify flow.
     """
-    return DenialReason(code="missing_identity", agent_memory=build_agent_memory_hint(base_url))
+    return DenialReason(
+        code="missing_identity",
+        agent_instructions=_MISSING_IDENTITY_INSTRUCTIONS,
+        agent_memory=build_agent_memory_hint(base_url),
+    )
 
 
 def denial_reason_to_body(reason: DenialReason) -> dict[str, Any]:
