@@ -226,10 +226,12 @@ async def test_averify_wallet_signer_match_linked_wallets_threaded_through() -> 
 
     client = GateClient(api_key=API_KEY)
     extra_wallet = "0xcccc000000000000000000000000000000000000"
-    responses = iter([
-        {"resolved_operator": "op_claimed", "linked_wallets": [WALLET_A.lower(), extra_wallet]},
-        {"resolved_operator": "op_signer", "linked_wallets": []},
-    ])
+    responses = iter(
+        [
+            {"resolved_operator": "op_claimed", "linked_wallets": [WALLET_A.lower(), extra_wallet]},
+            {"resolved_operator": "op_signer", "linked_wallets": []},
+        ]
+    )
 
     async def fake_apost(*_args: object, **_kwargs: object) -> MagicMock:
         resp = MagicMock()
@@ -405,11 +407,15 @@ async def test_fastapi_verify_wallet_signer_match_no_op_when_both_headers_sent()
 
     fake_client = AsyncMock()
     request = MagicMock()
-    setattr(request.state, GATE_STATE_KEY, {
-        "client": fake_client,
-        "operator_token": "opc_test",
-        "wallet_address": WALLET_A,
-    })
+    setattr(
+        request.state,
+        GATE_STATE_KEY,
+        {
+            "client": fake_client,
+            "operator_token": "opc_test",
+            "wallet_address": WALLET_A,
+        },
+    )
 
     result = await verify_wallet_signer_match(request, signer=WALLET_B)
 
@@ -484,11 +490,15 @@ async def test_sanic_verify_wallet_signer_match_no_op_when_both_headers_sent() -
 
     fake_client = AsyncMock()
     request = MagicMock()
-    setattr(request.ctx, GATE_STATE_ATTR, {
-        "client": fake_client,
-        "operator_token": "opc_test",
-        "wallet_address": WALLET_A,
-    })
+    setattr(
+        request.ctx,
+        GATE_STATE_ATTR,
+        {
+            "client": fake_client,
+            "operator_token": "opc_test",
+            "wallet_address": WALLET_A,
+        },
+    )
 
     result = await verify_wallet_signer_match(request, signer=WALLET_B)
 
@@ -505,10 +515,12 @@ def test_verify_wallet_signer_match_linked_wallets_threaded_through_sync() -> No
     """Sync path surfaces linked_wallets from the claimed wallet's /v1/assess response."""
     client = GateClient(api_key=API_KEY)
     extra_wallet = "0xcccc000000000000000000000000000000000000"
-    responses = iter([
-        {"resolved_operator": "op_claimed", "linked_wallets": [WALLET_A.lower(), extra_wallet]},
-        {"resolved_operator": "op_signer", "linked_wallets": []},
-    ])
+    responses = iter(
+        [
+            {"resolved_operator": "op_claimed", "linked_wallets": [WALLET_A.lower(), extra_wallet]},
+            {"resolved_operator": "op_signer", "linked_wallets": []},
+        ]
+    )
 
     def fake_post(*_args: object, **_kwargs: object) -> MagicMock:
         resp = MagicMock()
