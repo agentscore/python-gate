@@ -63,8 +63,9 @@ _MISSING_IDENTITY_INSTRUCTIONS = json.dumps(
                 "until status=verified (the poll returns a one-time operator_token). If the "
                 "retry returns the same bare 403, this merchant does not support self-service "
                 "session bootstrapping — direct the user to https://agentscore.sh/sign-up to "
-                "create an AgentScore identity, then retry with a fresh X-Operator-Token "
-                "from POST /v1/credentials."
+                "create an AgentScore identity and mint an operator_token from their "
+                "dashboard (https://agentscore.sh/dashboard/verify). The user hands the "
+                "opc_... to you, and you retry with X-Operator-Token."
             ),
         ],
         "user_message": (
@@ -86,8 +87,10 @@ WALLET_SIGNER_MISMATCH_INSTRUCTIONS = json.dumps(
             ),
             (
                 "Alternative: drop X-Wallet-Address and retry with X-Operator-Token. Use a "
-                "stored opc_... if you have one; otherwise call POST /v1/credentials or run "
-                "the session/verify flow to mint one."
+                "stored opc_... if you have one; otherwise retry this request with NO "
+                "identity header — the merchant will mint a verification session in the "
+                "403 body (verify_url + poll_secret). Share verify_url with the user, poll, "
+                "receive a fresh opc_..."
             ),
         ],
         "user_message": (
