@@ -21,6 +21,9 @@ DenialCode = Literal[
     # Added in 1.9.0 (TEC-226)
     "wallet_signer_mismatch",
     "wallet_auth_requires_wallet_signing",
+    # Added in 1.9.0 (TEC-218): passed through from /v1/assess granular denials.
+    "token_expired",
+    "token_revoked",
 ]
 
 
