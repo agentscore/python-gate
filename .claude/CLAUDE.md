@@ -9,9 +9,17 @@ All adapters (ASGI, FastAPI, Flask, Django, AIOHTTP, Sanic) support two identity
 - **Wallet address** — `X-Wallet-Address` header
 - **Operator token** — `X-Operator-Token` header
 
-Default checks `X-Operator-Token` first, then `X-Wallet-Address`. Types: `AgentIdentity`, `CreateSessionOnMissing` (shared from `agentscore_gate.sessions`). Client methods: `check_identity()`, `acheck_identity()`.
+Default checks `X-Operator-Token` first, then `X-Wallet-Address`. Types: `AgentIdentity`, `CreateSessionOnMissing` (shared from `agentscore_gate.sessions`), `DenialReason` (codes: `missing_identity`, `identity_verification_required`, `token_expired`, `token_revoked`, `wallet_signer_mismatch`, `wallet_auth_requires_wallet_signing`, `wallet_not_trusted`, `api_error`, `payment_required`), `VerifyWalletSignerMatchOptions`, `VerifyWalletSignerResult`. Client methods: `check_identity()`, `acheck_identity()`, `verify_wallet_signer_match()`, `averify_wallet_signer_match()`.
 
 `create_session_on_missing` is supported on every adapter — when set and no identity found, it creates a verification session and returns 403 with verify_url + poll instructions. Sync-path adapters (Flask/Django) use `try_create_session_denial_reason_sync`; async-path adapters use the async variant. Two optional hooks let merchants inject per-request context: `get_session_options(ctx)` overrides context/product_name per request, and `on_before_session(ctx, session)` runs a side effect after the session mints with its return dict merged into `DenialReason.extra` (surfaces in the 403 body). Both hooks accept sync or `async def` callables (detected via `inspect.iscoroutine`); sync-only adapters skip async hooks with a warning. Hook errors are swallowed with a log.
+
+### Wallet-signer binding
+
+Every adapter exposes `verify_wallet_signer_match(request, signer, network='evm')` (async) or the sync counterpart in Flask/Django. Call AFTER the agent submits a payment credential, BEFORE settlement. Extract the signer from the payment payload (EIP-3009 `from`, Tempo MPP DID, etc.). Returns a `VerifyWalletSignerResult` with `kind: "pass" | "wallet_signer_mismatch" | "wallet_auth_requires_wallet_signing"`. Non-pass variants carry `claimed_operator`, `actual_signer_operator`, `expected_signer`, `actual_signer`, `linked_wallets` (same-operator sibling wallets that would also be accepted). No-ops for operator-token requests or when both identity headers were sent. Shared response marshalling lives in `agentscore_gate/_response.py` (`denial_reason_to_body`).
+
+### Cross-merchant agent memory
+
+`DenialReason.agent_memory` carries a cross-merchant bootstrap hint (built via `build_agent_memory_hint(base_url)`). Emitted on `missing_identity` denials with no auto-session. The `_response.py` marshaller serializes it via `asdict` as the `agent_memory` field in the 403 body.
 
 ### Captured wallets (TEC-189)
 
