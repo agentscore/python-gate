@@ -166,7 +166,10 @@ class TestCreateSessionOnMissing:
                     "session_id": "sess_abc123",
                     "verify_url": "https://agentscore.sh/verify/sess_abc123",
                     "poll_secret": "ps_secret",
-                    "agent_instructions": "please verify",
+                    "next_steps": {
+                        "action": "deliver_verify_url_and_poll",
+                        "user_message": "please verify",
+                    },
                 },
             )
         )
@@ -182,7 +185,12 @@ class TestCreateSessionOnMissing:
         assert detail["session_id"] == "sess_abc123"
         assert detail["verify_url"] == "https://agentscore.sh/verify/sess_abc123"
         assert detail["poll_secret"] == "ps_secret"
-        assert detail["agent_instructions"] == "please verify"
+        # agent_instructions is the JSON-stringified next_steps from the API.
+        import json as _json
+
+        parsed = _json.loads(detail["agent_instructions"])
+        assert parsed["action"] == "deliver_verify_url_and_poll"
+        assert parsed["user_message"] == "please verify"
 
     @respx.mock
     def test_falls_back_to_missing_identity_on_session_api_failure(self):
@@ -285,3 +293,48 @@ class TestUserAgent:
         client.get("/", headers={"X-Wallet-Address": "0xabc"})
         ua = route.calls[0].request.headers["User-Agent"]
         assert ua.startswith("myapp/2.0 (agentscore-gate/")
+
+
+@respx.mock
+def test_fastapi_passes_through_token_expired():
+    respx.post("https://api.agentscore.sh/v1/assess").mock(
+        return_value=httpx.Response(
+            401,
+            json={
+                "error": {"code": "token_expired", "message": "expired"},
+                "next_steps": {"action": "deliver_verify_url_and_poll"},
+            },
+        )
+    )
+    gate = AgentScoreGate(api_key="ak", fail_open=False)
+    app = FastAPI()
+
+    @app.get("/", dependencies=[Depends(gate)])
+    def index():
+        return {"ok": True}
+
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-operator-token": "opc_exp"})
+    assert resp.status_code == 403
+    # FastAPI wraps the denial body under HTTPException.detail.
+    detail = resp.json()["detail"]
+    assert detail["error"] == "token_expired"
+    assert json.loads(detail["agent_instructions"]) == {"action": "deliver_verify_url_and_poll"}
+
+
+@respx.mock
+def test_fastapi_api_error_on_unexpected_exception():
+    respx.post("https://api.agentscore.sh/v1/assess").mock(
+        side_effect=httpx.ConnectError("dns down"),
+    )
+    gate = AgentScoreGate(api_key="ak", fail_open=False)
+    app = FastAPI()
+
+    @app.get("/", dependencies=[Depends(gate)])
+    def index():
+        return {"ok": True}
+
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["error"] == "api_error"

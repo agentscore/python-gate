@@ -24,7 +24,11 @@ SESSION_RESPONSE = {
     "session_id": "sess_abc123",
     "verify_url": "https://agentscore.sh/verify/sess_abc123",
     "poll_secret": "ps_secret_456",
-    "agent_instructions": "Please complete identity verification at the verify_url.",
+    # API emits structured next_steps; gate stringifies into agent_instructions.
+    "next_steps": {
+        "action": "deliver_verify_url_and_poll",
+        "user_message": "Please complete identity verification at the verify_url.",
+    },
 }
 
 
@@ -67,7 +71,10 @@ class TestCreateSessionOnMissing:
         assert data["verify_url"] == "https://agentscore.sh/verify/sess_abc123"
         assert data["session_id"] == "sess_abc123"
         assert data["poll_secret"] == "ps_secret_456"
-        assert data["agent_instructions"] == "Please complete identity verification at the verify_url."
+        # agent_instructions is the JSON-stringified next_steps from the API.
+        parsed = json.loads(data["agent_instructions"])
+        assert parsed["action"] == "deliver_verify_url_and_poll"
+        assert parsed["user_message"] == "Please complete identity verification at the verify_url."
 
     @respx.mock
     def test_session_request_uses_correct_api_key(self):
@@ -273,3 +280,160 @@ class TestCaptureWallet:
             capture_wallet(request, "0xsigner", "evm"),
         )
         assert capture_route.call_count == 0
+
+
+@respx.mock
+def test_middleware_surfaces_generic_api_error_on_unexpected_exception():
+    """When the assess client throws something other than PaymentRequired/TokenDenied,
+    the middleware emits a generic api_error denial (no payload/stack leaks)."""
+    respx.post(ASSESS_URL).mock(side_effect=httpx.ConnectError("dns lookup failed"))
+
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+
+    assert resp.status_code == 403
+    assert resp.json()["error"] == "api_error"
+
+
+@respx.mock
+def test_middleware_fail_open_on_unexpected_exception_lets_request_through():
+    respx.post(ASSESS_URL).mock(side_effect=httpx.ConnectError("dns lookup failed"))
+
+    app = _make_app(fail_open=True)
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+
+@respx.mock
+def test_middleware_passes_through_token_expired_with_auto_session():
+    # Revoked and expired credentials both surface as token_expired from the API with an
+    # auto-minted session in the 401 body. Middleware forwards all session fields so the
+    # 403 downstream carries verify_url + session_id + poll_secret for agent recovery.
+    respx.post(ASSESS_URL).mock(
+        return_value=httpx.Response(
+            401,
+            json={
+                "error": {"code": "token_expired", "message": "invalid"},
+                "session_id": "sess_auto",
+                "poll_secret": "poll_auto",
+                "verify_url": "https://agentscore.sh/verify?session=sess_auto",
+                "poll_url": "https://api.agentscore.sh/v1/sessions/sess_auto",
+                "next_steps": {"action": "deliver_verify_url_and_poll"},
+            },
+        )
+    )
+
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-operator-token": "opc_revoked"})
+
+    assert resp.status_code == 403
+    body = resp.json()
+    assert body["error"] == "token_expired"
+    assert body["session_id"] == "sess_auto"
+    assert body["poll_secret"] == "poll_auto"
+    assert body["verify_url"] == "https://agentscore.sh/verify?session=sess_auto"
+    assert json.loads(body["agent_instructions"]) == {"action": "deliver_verify_url_and_poll"}
+
+
+@respx.mock
+def test_middleware_emits_invalid_credential_no_session():
+    # `invalid_credential` is permanent — the API returns 401 with NO auto-session
+    # (distinct from token_expired). Middleware must classify it as a 403 with
+    # action='switch_token_or_restart_session', NOT fall through to api_error 503
+    # which would tell the agent to retry forever on a permanent state.
+    respx.post(ASSESS_URL).mock(
+        return_value=httpx.Response(
+            401,
+            json={"error": {"code": "invalid_credential", "message": "Operator credential not found"}},
+        )
+    )
+
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-operator-token": "opc_typo_does_not_exist"})
+
+    assert resp.status_code == 403
+    body = resp.json()
+    assert body["error"] == "invalid_credential"
+    # Agent_instructions guides the agent to switch tokens or restart the session flow.
+    instructions = json.loads(body["agent_instructions"])
+    assert instructions["action"] == "switch_token_or_restart_session"
+    msg = instructions["user_message"].lower()
+    assert "switch tokens" in msg or "different stored token" in msg
+    # No session fields — the API didn't mint one for this case.
+    assert "session_id" not in body
+    assert "verify_url" not in body
+    assert "poll_secret" not in body
+
+
+@respx.mock
+def test_middleware_passes_through_token_expired_without_next_steps():
+    respx.post(ASSESS_URL).mock(
+        return_value=httpx.Response(
+            401,
+            json={"error": {"code": "token_expired", "message": "expired"}},
+        )
+    )
+
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-operator-token": "opc_expired"})
+
+    assert resp.status_code == 403
+    body = resp.json()
+    assert body["error"] == "token_expired"
+    # next_steps absent → agent_instructions omitted entirely.
+    assert "agent_instructions" not in body
+
+
+@respx.mock
+def test_middleware_emits_wallet_not_trusted_on_policy_deny():
+    respx.post(ASSESS_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "decision": "deny",
+                "decision_reasons": ["kyc_required"],
+                "verify_url": "https://agentscore.sh/verify",
+            },
+        )
+    )
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+
+    assert resp.status_code == 403
+    body = resp.json()
+    assert body["error"] == "wallet_not_trusted"
+    assert body["decision"] == "deny"
+    assert body["reasons"] == ["kyc_required"]
+    assert body["verify_url"] == "https://agentscore.sh/verify"
+
+
+@respx.mock
+def test_middleware_emits_payment_required_on_402():
+    respx.post(ASSESS_URL).mock(return_value=httpx.Response(402, json={}))
+
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+
+    assert resp.status_code == 403
+    assert resp.json()["error"] == "payment_required"
+
+
+@respx.mock
+def test_middleware_fail_open_on_402_lets_request_through():
+    respx.post(ASSESS_URL).mock(return_value=httpx.Response(402, json={}))
+
+    app = _make_app(fail_open=True)
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True

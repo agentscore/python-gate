@@ -9,9 +9,31 @@ All adapters (ASGI, FastAPI, Flask, Django, AIOHTTP, Sanic) support two identity
 - **Wallet address** — `X-Wallet-Address` header
 - **Operator token** — `X-Operator-Token` header
 
-Default checks `X-Operator-Token` first, then `X-Wallet-Address`. Types: `AgentIdentity`, `CreateSessionOnMissing` (shared from `agentscore_gate.sessions`). Client methods: `check_identity()`, `acheck_identity()`.
+Default checks `X-Operator-Token` first, then `X-Wallet-Address`. Types: `AgentIdentity`, `CreateSessionOnMissing` (shared from `agentscore_gate.sessions`), `DenialReason` (codes: `missing_identity`, `identity_verification_required`, `token_expired`, `invalid_credential`, `wallet_signer_mismatch`, `wallet_auth_requires_wallet_signing`, `wallet_not_trusted`, `api_error`, `payment_required` — `token_expired` covers revoked + TTL-expired and carries an auto-session for one-shot recovery; `invalid_credential` covers tokens that never existed and has no auto-session because the agent likely has another stored token to try), `VerifyWalletSignerMatchOptions`, `VerifyWalletSignerResult`. Client methods: `check_identity()`, `acheck_identity()`, `verify_wallet_signer_match()`, `averify_wallet_signer_match()`. Address normalization is network-aware via `agentscore_gate/address.py` (`normalize_address`): EVM lowercased, Solana base58 preserved verbatim — used for cache keys, wallet→operator resolves, and signer-match so cross-chain captured wallets resolve correctly.
 
 `create_session_on_missing` is supported on every adapter — when set and no identity found, it creates a verification session and returns 403 with verify_url + poll instructions. Sync-path adapters (Flask/Django) use `try_create_session_denial_reason_sync`; async-path adapters use the async variant. Two optional hooks let merchants inject per-request context: `get_session_options(ctx)` overrides context/product_name per request, and `on_before_session(ctx, session)` runs a side effect after the session mints with its return dict merged into `DenialReason.extra` (surfaces in the 403 body). Both hooks accept sync or `async def` callables (detected via `inspect.iscoroutine`); sync-only adapters skip async hooks with a warning. Hook errors are swallowed with a log.
+
+### Wallet-signer binding
+
+Every adapter exposes `verify_wallet_signer_match(request, signer, network='evm')` (async) or the sync counterpart in Flask/Django. Call AFTER the agent submits a payment credential, BEFORE settlement. Extract the signer from the payment payload (EIP-3009 `from`, Tempo MPP DID, etc.). Returns a `VerifyWalletSignerResult` with `kind: "pass" | "wallet_signer_mismatch" | "wallet_auth_requires_wallet_signing"`. Non-pass variants carry `claimed_operator`, `actual_signer_operator`, `expected_signer`, `actual_signer`, `linked_wallets` (same-operator sibling wallets that would also be accepted), plus `agent_instructions` — a JSON-encoded `{action, steps, user_message}` block merchants can spread directly into the 403 body. No-ops for operator-token requests or when both identity headers were sent. Shared response marshalling lives in `agentscore_gate/_response.py` (`denial_reason_to_body`).
+
+### Action copy on denials (agent_instructions convention)
+
+Every gate-emitted denial carries an `agent_instructions` JSON string (`{action, steps, user_message}`) so agents see a concrete recovery path inside the response. Canned copies are constants in `agentscore_gate/_response.py`:
+
+- `missing_identity` → `probe_identity_then_session` (try wallet on signing rails, fall back to opc_..., fall back to session flow)
+- `wallet_signer_mismatch` → `resign_or_switch_to_operator_token` (re-sign from `expected_signer` / any `linked_wallets`, or drop the wallet header and use opc_...)
+- `wallet_auth_requires_wallet_signing` → `switch_to_operator_token` (non-signing rail; drop wallet header)
+- `token_expired` — API emits an auto-minted session in the 401 body (verify_url + session_id + poll_secret + next_steps); middleware forwards via `build_token_denied_reason(err)` so the 403 carries everything the agent needs to recover. Covers revoked + TTL-expired transparently.
+- `invalid_credential` → `switch_token_or_restart_session` — token doesn't exist (typo, fabricated). Permanent: no auto-session because the agent likely has another stored `opc_...` to try; if not, drop the header to bootstrap. Raised as `InvalidCredentialError` from the client; `build_invalid_credential_reason()` shapes the DenialReason. Distinct from `token_expired` so adapters return 403 with action copy instead of the generic api_error 503 retry.
+
+Silent fall-throughs in the client (`except: pass`-ish) used to mask schema drift and 401 body parse failures. Each now logs at warn level via the module logger — same fall-through behavior, just visible: `[gate] /v1/assess 401 body parse failed`, `[gate] /v1/assess returned 401 <unknown_code>`.
+
+Convention matches the API's structured `next_steps` responses (same `{action, user_message}` shape, wrapped as a JSON string inside `agent_instructions`). `user_message` lives inside — never duplicated at top level.
+
+### Cross-merchant agent memory
+
+`DenialReason.agent_memory` carries a cross-merchant bootstrap hint (built via `build_agent_memory_hint(base_url)`). Emitted on `missing_identity` denials with no auto-session. The `_response.py` marshaller serializes it via `asdict` as the `agent_memory` field in the 403 body.
 
 ### Captured wallets (TEC-189)
 

@@ -12,9 +12,23 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 from starlette.requests import Request  # noqa: TC002 - runtime import required for FastAPI DI
 
-from agentscore_gate.client import GateClient, PaymentRequiredError
+from agentscore_gate._response import build_missing_identity_reason, denial_reason_to_body
+from agentscore_gate.client import (
+    GateClient,
+    InvalidCredentialError,
+    PaymentRequiredError,
+    TokenDeniedError,
+    build_invalid_credential_reason,
+    build_token_denied_reason,
+)
 from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason
-from agentscore_gate.types import AgentIdentity, DenialReason, Network
+from agentscore_gate.types import (
+    AgentIdentity,
+    DenialReason,
+    Network,
+    VerifyWalletSignerMatchOptions,
+    VerifyWalletSignerResult,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,24 +64,7 @@ def _default_extract_chain(_request: Request) -> str | None:
 
 
 def _build_denial_body(reason: DenialReason) -> dict[str, Any]:
-    body: dict[str, Any] = {"error": reason.code}
-    if reason.decision is not None:
-        body["decision"] = reason.decision
-    if reason.reasons:
-        body["reasons"] = reason.reasons
-    if reason.verify_url:
-        body["verify_url"] = reason.verify_url
-    if reason.session_id:
-        body["session_id"] = reason.session_id
-    if reason.poll_secret:
-        body["poll_secret"] = reason.poll_secret
-    if reason.poll_url:
-        body["poll_url"] = reason.poll_url
-    if reason.agent_instructions:
-        body["agent_instructions"] = reason.agent_instructions
-    if reason.extra:
-        body.update(reason.extra)
-    return body
+    return denial_reason_to_body(reason)
 
 
 class AgentScoreGate:
@@ -144,7 +141,11 @@ class AgentScoreGate:
         # after the route handler runs.
         request.state.__setattr__(
             GATE_STATE_KEY,
-            {"client": self._client, "operator_token": identity.operator_token if identity else None},
+            {
+                "client": self._client,
+                "operator_token": identity.operator_token if identity else None,
+                "wallet_address": identity.address if identity else None,
+            },
         )
 
         if not identity:
@@ -158,7 +159,7 @@ class AgentScoreGate:
                 )
                 if session_reason is not None:
                     self._deny(request, session_reason)
-            self._deny(request, DenialReason(code="missing_identity"))
+            self._deny(request, build_missing_identity_reason(self._client.base_url))
 
         chain_override = self._extract_chain(request)
 
@@ -168,6 +169,11 @@ class AgentScoreGate:
             if self._client.fail_open:
                 return
             self._deny(request, DenialReason(code="payment_required"))
+        except TokenDeniedError as err:
+            self._deny(request, build_token_denied_reason(err))
+        except InvalidCredentialError:
+            # Permanent — no auto-session, agent should switch tokens or restart.
+            self._deny(request, build_invalid_credential_reason())
         except Exception:
             if self._client.fail_open:
                 return
@@ -200,6 +206,28 @@ def get_assess_data(request: Request) -> dict[str, Any] | None:
             ...
     """
     return getattr(request.state, ASSESS_STATE_KEY, None)
+
+
+async def verify_wallet_signer_match(
+    request: Request,
+    signer: str | None,
+    network: Network = "evm",
+) -> VerifyWalletSignerResult:
+    """Verify payment signer matches claimed X-Wallet-Address.
+
+    No-ops when operator-token-authenticated or when both headers were sent. See
+    :func:`agentscore_gate.middleware.verify_wallet_signer_match` for the full contract.
+    """
+    state = getattr(request.state, GATE_STATE_KEY, None)
+    if not state or not state.get("wallet_address") or state.get("operator_token"):
+        return VerifyWalletSignerResult(kind="pass")
+    return await state["client"].averify_wallet_signer_match(
+        VerifyWalletSignerMatchOptions(
+            claimed_wallet=state["wallet_address"],
+            signer=signer,
+            network=network,
+        ),
+    )
 
 
 async def capture_wallet(

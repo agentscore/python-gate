@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentscore-gate"
-version = "1.8.0"
+version = "1.9.0"
 description = "Trust-gating middleware for Python web frameworks using AgentScore"
 readme = "README.md"
 license = "MIT"
@@ -63,4 +63,4 @@ include = ["agentscore_gate"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "--cov=agentscore_gate --cov-report=term-missing --cov-fail-under=91"
+addopts = "--cov=agentscore_gate --cov-report=term-missing --cov-fail-under=95"

@@ -188,7 +188,10 @@ class TestCreateSessionOnMissing:
                     "session_id": "sess_abc123",
                     "verify_url": "https://agentscore.sh/verify/sess_abc123",
                     "poll_secret": "ps_secret",
-                    "agent_instructions": "please verify",
+                    "next_steps": {
+                        "action": "deliver_verify_url_and_poll",
+                        "user_message": "please verify",
+                    },
                 },
             )
         )
@@ -203,7 +206,11 @@ class TestCreateSessionOnMissing:
             assert data["session_id"] == "sess_abc123"
             assert data["verify_url"] == "https://agentscore.sh/verify/sess_abc123"
             assert data["poll_secret"] == "ps_secret"
-            assert data["agent_instructions"] == "please verify"
+            import json as _json
+
+            parsed = _json.loads(data["agent_instructions"])
+            assert parsed["action"] == "deliver_verify_url_and_poll"
+            assert parsed["user_message"] == "please verify"
 
     @pytest.mark.asyncio
     @respx.mock
@@ -289,3 +296,54 @@ class TestUserAgent:
             await client.get("/", headers={"X-Wallet-Address": "0xabc"})
             ua = route.calls[0].request.headers["User-Agent"]
             assert ua.startswith("myapp/2.0 (agentscore-gate/")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_aiohttp_passes_through_token_expired():
+    respx.post("https://api.agentscore.sh/v1/assess").mock(
+        return_value=httpx.Response(
+            401,
+            json={
+                "error": {"code": "token_expired", "message": "expired"},
+                "next_steps": {"action": "deliver_verify_url_and_poll"},
+            },
+        )
+    )
+    app = web.Application(
+        middlewares=[agentscore_gate_middleware(api_key="ak", fail_open=False)],
+    )
+
+    async def handler(_req):
+        return web.json_response({"ok": True})
+
+    app.router.add_get("/", handler)
+
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.get("/", headers={"x-operator-token": "opc_exp"})
+        assert resp.status == 403
+        body = await resp.json()
+        assert body["error"] == "token_expired"
+        assert json.loads(body["agent_instructions"]) == {"action": "deliver_verify_url_and_poll"}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_aiohttp_api_error_on_unexpected_exception():
+    respx.post("https://api.agentscore.sh/v1/assess").mock(
+        side_effect=httpx.ConnectError("dns down"),
+    )
+    app = web.Application(
+        middlewares=[agentscore_gate_middleware(api_key="ak", fail_open=False)],
+    )
+
+    async def handler(_req):
+        return web.json_response({"ok": True})
+
+    app.router.add_get("/", handler)
+
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.get("/", headers={"x-wallet-address": "0xabc"})
+        assert resp.status == 403
+        body = await resp.json()
+        assert body["error"] == "api_error"

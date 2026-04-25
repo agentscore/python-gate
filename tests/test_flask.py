@@ -424,3 +424,185 @@ class TestFlaskChainOption:
             client.get("/", headers={"x-wallet-address": "0xabc"})
             body = json.loads(route.calls[0].request.content)
             assert body["chain"] == "solana"
+
+
+class TestFlaskTokenDenied:
+    """Flask adapter handles granular 401 denial codes from /v1/assess."""
+
+    def test_passes_through_token_expired_with_auto_session(self) -> None:
+        # Revoked and expired credentials both surface as token_expired; adapter forwards
+        # the API's auto-minted session fields into the 403 body.
+        from agentscore_gate.client import TokenDeniedError
+
+        app = _make_app()
+        with patch(
+            "agentscore_gate.flask.GateClient.check",
+            side_effect=TokenDeniedError(
+                {
+                    "error": {"code": "token_expired", "message": "invalid"},
+                    "session_id": "sess_flask",
+                    "poll_secret": "poll_flask",
+                    "verify_url": "https://agentscore.sh/verify?session=sess_flask",
+                    "next_steps": {"action": "deliver_verify_url_and_poll"},
+                }
+            ),
+        ):
+            client = app.test_client()
+            resp = client.get("/", headers={"x-operator-token": "opc_revoked"})
+
+        assert resp.status_code == 403
+        import json as _json
+
+        body = resp.get_json()
+        assert body["error"] == "token_expired"
+        assert body["session_id"] == "sess_flask"
+        assert body["poll_secret"] == "poll_flask"
+        assert _json.loads(body["agent_instructions"]) == {"action": "deliver_verify_url_and_poll"}
+
+    def test_passes_through_token_expired_without_next_steps(self) -> None:
+        from agentscore_gate.client import TokenDeniedError
+
+        app = _make_app()
+        with patch(
+            "agentscore_gate.flask.GateClient.check",
+            side_effect=TokenDeniedError({"error": {"code": "token_expired", "message": "invalid"}}),
+        ):
+            client = app.test_client()
+            resp = client.get("/", headers={"x-operator-token": "opc_expired"})
+
+        assert resp.status_code == 403
+        body = resp.get_json()
+        assert body["error"] == "token_expired"
+        assert "agent_instructions" not in body
+
+
+class TestFlaskGenericFailure:
+    """Flask adapter emits a generic api_error on unexpected exceptions (fail-closed default)."""
+
+    def test_api_error_on_connect_failure(self) -> None:
+        import httpx
+
+        app = _make_app()
+        with patch(
+            "agentscore_gate.flask.GateClient.check",
+            side_effect=httpx.ConnectError("dns lookup failed"),
+        ):
+            client = app.test_client()
+            resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+
+        assert resp.status_code == 403
+        assert resp.get_json()["error"] == "api_error"
+
+    def test_fail_open_lets_request_through_on_unexpected_exception(self) -> None:
+        import httpx
+
+        app = _make_app(fail_open=True)
+        with patch(
+            "agentscore_gate.flask.GateClient.check",
+            side_effect=httpx.ConnectError("dns lookup failed"),
+        ):
+            client = app.test_client()
+            resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+
+        assert resp.status_code == 200
+        assert resp.get_json()["ok"] is True
+
+    def test_payment_required_surfaces_as_denial(self) -> None:
+        app = _make_app()
+        with patch(
+            "agentscore_gate.flask.GateClient.check",
+            side_effect=PaymentRequiredError,
+        ):
+            client = app.test_client()
+            resp = client.get("/", headers={"x-wallet-address": "0xabc"})
+
+        assert resp.status_code == 403
+        assert resp.get_json()["error"] == "payment_required"
+
+
+class TestFlaskBadOnDenied:
+    """Flask adapter's _on_denied-return-shape guard: must raise a clear TypeError so
+    merchants know their handler signature is wrong, not silently 500 with a cryptic error."""
+
+    def test_missing_identity_branch_bad_on_denied_shape(self) -> None:
+        app = _make_app(on_denied=lambda _req, _reason: "not a tuple")
+        client = app.test_client()
+        # No identity → missing_identity branch uses _on_denied which returns wrong shape.
+        with pytest.raises(TypeError, match="on_denied must return"):
+            client.get("/")
+
+    def test_wallet_not_trusted_branch_bad_on_denied_shape(self) -> None:
+        app = _make_app(on_denied=lambda _req, _reason: None)
+        with patch(
+            "agentscore_gate.flask.GateClient.check",
+            return_value=_mock_result(allow=False, decision="deny"),
+        ):
+            client = app.test_client()
+            with pytest.raises(TypeError, match="on_denied must return"):
+                client.get("/", headers={"x-wallet-address": "0xabc"})
+
+    def test_token_denied_branch_bad_on_denied_shape(self) -> None:
+        from agentscore_gate.client import TokenDeniedError
+
+        app = _make_app(on_denied=lambda _req, _reason: 42)
+        with patch(
+            "agentscore_gate.flask.GateClient.check",
+            side_effect=TokenDeniedError({"error": {"code": "token_expired"}}),
+        ):
+            client = app.test_client()
+            with pytest.raises(TypeError, match="on_denied must return"):
+                client.get("/", headers={"x-operator-token": "opc_exp"})
+
+    def test_api_error_branch_bad_on_denied_shape(self) -> None:
+        import httpx
+
+        app = _make_app(on_denied=lambda _req, _reason: ({"x": 1},))  # single-element tuple
+        with patch(
+            "agentscore_gate.flask.GateClient.check",
+            side_effect=httpx.ConnectError("dns down"),
+        ):
+            client = app.test_client()
+            with pytest.raises(TypeError, match="on_denied must return"):
+                client.get("/", headers={"x-wallet-address": "0xabc"})
+
+
+class TestFlaskVerifyWalletSignerMatchNoOp:
+    """verify_wallet_signer_match silently returns pass when Flask state isn't available."""
+
+    def test_no_op_outside_request_context(self) -> None:
+        from agentscore_gate.flask import verify_wallet_signer_match
+
+        # Flask's g raises RuntimeError when accessed outside an app context.
+        # The adapter should catch and return pass, not propagate.
+        result = verify_wallet_signer_match(signer="0xabc")
+        assert result.kind == "pass"
+
+    def test_no_op_when_gate_state_missing_in_request(self) -> None:
+        from flask import Flask
+
+        from agentscore_gate.flask import verify_wallet_signer_match
+
+        # App without the gate registered → g._agentscore_gate is absent.
+        app = Flask(__name__)
+        with app.test_request_context("/"):
+            result = verify_wallet_signer_match(signer="0xabc")
+            assert result.kind == "pass"
+
+
+class TestFlaskCaptureWalletNoOp:
+    """capture_wallet silently no-ops when state is missing or request is wallet-authenticated."""
+
+    def test_no_op_outside_request_context(self) -> None:
+        from agentscore_gate.flask import capture_wallet
+
+        # Outside a Flask request, g.RuntimeError → return None silently.
+        capture_wallet("0xwallet", "evm")
+
+    def test_no_op_when_gate_state_missing(self) -> None:
+        from flask import Flask
+
+        from agentscore_gate.flask import capture_wallet
+
+        app = Flask(__name__)
+        with app.test_request_context("/"):
+            capture_wallet("0xwallet", "evm")  # should not raise

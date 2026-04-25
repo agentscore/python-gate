@@ -112,6 +112,17 @@ app.add_middleware(
 )
 ```
 
+### Denial bodies
+
+Every 403 body carries `agent_instructions` — a JSON-encoded `{action, steps, user_message}` block so agents act from the response itself, no discovery-doc round trip. Actions:
+
+| Code | `action` |
+|---|---|
+| `missing_identity` | `probe_identity_then_session` (try wallet on signing rails → stored opc_... → session flow) |
+| `wallet_signer_mismatch` | `resign_or_switch_to_operator_token` (body also carries `claimed_operator`, `actual_signer_operator`, `expected_signer`, `actual_signer`, `linked_wallets`) |
+| `wallet_auth_requires_wallet_signing` | `switch_to_operator_token` |
+| `token_expired` | `deliver_verify_url_and_poll` (API auto-mints a session in the 401 body; unified code for both TTL-expired and revoked) |
+
 ### Auto-Create Session
 
 Works on every adapter (ASGI, FastAPI, Flask, Django, AIOHTTP, Sanic).
@@ -124,7 +135,7 @@ app.add_middleware(
     api_key="as_live_...",
     create_session_on_missing=CreateSessionOnMissing(api_key="as_live_..."),
 )
-# 403 includes: verify_url, session_id, poll_secret, poll_url, agent_instructions
+# 403 includes: verify_url, session_id, poll_secret, poll_url, agent_instructions, agent_memory
 ```
 
 ### Per-request hooks
@@ -222,6 +233,26 @@ async def purchase(request):
 ```
 
 Fire-and-forget by design: silently no-ops if the request was wallet-authenticated (no operator_token), the gate didn't run, or the API call fails. `idempotency_key` (payment intent id, tx hash, …) prevents agent retries of the same payment from inflating `transaction_count` server-side.
+
+## Verify wallet signer match
+
+Verify the payment signer resolves to the same AgentScore operator as the claimed `X-Wallet-Address`. Call after the agent submits a payment credential, before settlement. Each adapter exposes `verify_wallet_signer_match` — async on FastAPI/AIOHTTP/Sanic/ASGI, sync on Flask/Django. No-ops on operator-token requests.
+
+```python
+# FastAPI (async)
+from agentscore_gate.fastapi import verify_wallet_signer_match
+
+@app.post("/purchase", dependencies=[Depends(gate)])
+async def purchase(request: Request):
+    match = await verify_wallet_signer_match(request, signer=recovered_signer)
+    if match.kind != "pass":
+        return JSONResponse({"error": match.kind, **match.__dict__}, status_code=403)
+    # ... settle payment ...
+```
+
+`match.kind` is `"pass" | "wallet_signer_mismatch" | "wallet_auth_requires_wallet_signing" | "api_error"`. Non-pass / non-api_error variants include `claimed_operator`, `actual_signer_operator`, `expected_signer`, `actual_signer`, `linked_wallets`, and `agent_instructions` (JSON-encoded action copy merchants spread directly into the 403 body).
+
+Available on every adapter (`fastapi`, `flask`, `django`, `aiohttp`, `sanic`, `middleware`). Flask and Django use sync signatures; others use async.
 
 ## Documentation
 

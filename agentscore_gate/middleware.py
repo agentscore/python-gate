@@ -2,14 +2,28 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from agentscore_gate.client import GateClient, PaymentRequiredError
+from agentscore_gate._response import build_missing_identity_reason, denial_reason_to_body
+from agentscore_gate.client import (
+    GateClient,
+    InvalidCredentialError,
+    PaymentRequiredError,
+    TokenDeniedError,
+    build_invalid_credential_reason,
+    build_token_denied_reason,
+)
 from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason
-from agentscore_gate.types import AgentIdentity, DenialReason, Network
+from agentscore_gate.types import (
+    AgentIdentity,
+    DenialReason,
+    Network,
+    VerifyWalletSignerMatchOptions,
+    VerifyWalletSignerResult,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -41,24 +55,7 @@ def _default_extract_identity(request: Request) -> AgentIdentity | None:
 
 
 async def _default_on_denied(_request: Request, reason: DenialReason) -> JSONResponse:
-    body: dict[str, Any] = {"error": reason.code}
-    if reason.decision is not None:
-        body["decision"] = reason.decision
-    if reason.reasons:
-        body["reasons"] = reason.reasons
-    if reason.verify_url:
-        body["verify_url"] = reason.verify_url
-    if reason.session_id:
-        body["session_id"] = reason.session_id
-    if reason.poll_secret:
-        body["poll_secret"] = reason.poll_secret
-    if reason.poll_url:
-        body["poll_url"] = reason.poll_url
-    if reason.agent_instructions:
-        body["agent_instructions"] = reason.agent_instructions
-    if reason.extra:
-        body.update(reason.extra)
-    return JSONResponse(body, status_code=403)
+    return JSONResponse(denial_reason_to_body(reason), status_code=403)
 
 
 class AgentScoreGate:
@@ -126,6 +123,7 @@ class AgentScoreGate:
         scope["state"][GATE_STATE_KEY] = {
             "client": self._client,
             "operator_token": identity.operator_token if identity else None,
+            "wallet_address": identity.address if identity else None,
         }
         if not identity:
             if self._client.fail_open:
@@ -143,7 +141,7 @@ class AgentScoreGate:
                     await response(scope, receive, send)
                     return
 
-            reason = DenialReason(code="missing_identity")
+            reason = build_missing_identity_reason(self._client.base_url)
             response = await self._on_denied(request, reason)
             await response(scope, receive, send)
             return
@@ -172,6 +170,15 @@ class AgentScoreGate:
             reason = DenialReason(code="payment_required")
             response = await self._on_denied(request, reason)
             await response(scope, receive, send)
+        except TokenDeniedError as err:
+            reason = build_token_denied_reason(err)
+            response = await self._on_denied(request, reason)
+            await response(scope, receive, send)
+        except InvalidCredentialError:
+            # Permanent — no auto-session, agent should switch tokens or restart.
+            reason = build_invalid_credential_reason()
+            response = await self._on_denied(request, reason)
+            await response(scope, receive, send)
         except Exception:
             if self._client.fail_open:
                 await self.app(scope, receive, send)
@@ -179,6 +186,35 @@ class AgentScoreGate:
             reason = DenialReason(code="api_error")
             response = await self._on_denied(request, reason)
             await response(scope, receive, send)
+
+
+async def verify_wallet_signer_match(
+    request: Request,
+    signer: str | None,
+    network: Network = "evm",
+) -> VerifyWalletSignerResult:
+    """Verify the payment signer resolves to the same operator as the claimed X-Wallet-Address.
+
+    Call this AFTER parsing the payment credential, BEFORE settlement. Returns:
+
+    * ``kind='pass'`` — byte-equal or same-operator match
+    * ``kind='wallet_signer_mismatch'`` — different operator / unlinked signer
+    * ``kind='wallet_auth_requires_wallet_signing'`` — signer is None (SPT/card)
+
+    No-ops (returns ``pass`` with ``claimed_operator=None``) when the request was operator-token
+    authenticated or when both headers were sent (operator-token wins — the caller opted out of
+    strict wallet-auth). Signer-match only runs on strict wallet-auth requests.
+    """
+    state = request.scope.get("state", {}).get(GATE_STATE_KEY)
+    if not state or not state.get("wallet_address") or state.get("operator_token"):
+        return VerifyWalletSignerResult(kind="pass")
+    return await state["client"].averify_wallet_signer_match(
+        VerifyWalletSignerMatchOptions(
+            claimed_wallet=state["wallet_address"],
+            signer=signer,
+            network=network,
+        ),
+    )
 
 
 async def capture_wallet(

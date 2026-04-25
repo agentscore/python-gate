@@ -249,3 +249,58 @@ class TestCaptureWallet:
             _, resp = app.test_client.post("/purchase")
             assert resp.status == 200
         mock_capture.assert_not_awaited()
+
+
+def test_sanic_passes_through_token_expired():
+    from agentscore_gate.client import TokenDeniedError
+
+    app = Sanic("sanic_token_expired_test")
+    agentscore_gate(app, api_key="ak", fail_open=False)
+
+    @app.get("/")
+    async def index(_request):
+        return response.json({"ok": True})
+
+    with patch(
+        "agentscore_gate.sanic.GateClient.acheck_identity",
+        new=AsyncMock(
+            side_effect=TokenDeniedError(
+                {
+                    "error": {"code": "token_expired", "message": "invalid"},
+                    "session_id": "sess_abc",
+                    "poll_secret": "poll_xyz",
+                    "verify_url": "https://agentscore.sh/verify?session=sess_abc",
+                    "next_steps": {"action": "deliver_verify_url_and_poll"},
+                }
+            )
+        ),
+    ):
+        _req, resp = app.test_client.get("/", headers={"x-operator-token": "opc_exp"})
+
+    assert resp.status == 403
+    body = resp.json
+    assert body["error"] == "token_expired"
+    # Auto-session fields forwarded from the API's 401 body.
+    assert body["session_id"] == "sess_abc"
+    assert body["poll_secret"] == "poll_xyz"
+    import json as _json
+
+    assert _json.loads(body["agent_instructions"]) == {"action": "deliver_verify_url_and_poll"}
+
+
+def test_sanic_api_error_on_unexpected_exception():
+    app = Sanic("sanic_api_error_test")
+    agentscore_gate(app, api_key="ak", fail_open=False)
+
+    @app.get("/")
+    async def index(_request):
+        return response.json({"ok": True})
+
+    with patch(
+        "agentscore_gate.sanic.GateClient.acheck_identity",
+        new=AsyncMock(side_effect=RuntimeError("unexpected")),
+    ):
+        _req, resp = app.test_client.get("/", headers={"x-wallet-address": "0xabc"})
+
+    assert resp.status == 403
+    assert resp.json["error"] == "api_error"

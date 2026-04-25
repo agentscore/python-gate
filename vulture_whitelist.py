@@ -66,6 +66,21 @@ checks  # noqa: F821
 PolicyCheck  # noqa: F821
 PolicyResult  # noqa: F821
 
+# AgentMemoryHint dataclass fields — read at JSON-serialization time by adapters
+save_for_future_agentscore_gates  # noqa: F821
+pattern_summary  # noqa: F821
+quickstart  # noqa: F821
+identity_check_endpoint  # noqa: F821
+identity_paths  # noqa: F821
+bootstrap  # noqa: F821
+do_not_persist_in_memory  # noqa: F821
+persist_in_credential_store  # noqa: F821
+list_wallets_endpoint  # noqa: F821
+
+# VerifyWalletSignerResult dataclass field — read by adapters when constructing
+# the 403 denial body. Only set on `pass` results (byte-equal or same-operator).
+signer_operator  # noqa: F821
+
 # Django adapter — used by consumers via settings.py MIDDLEWARE
 AgentScoreMiddleware  # noqa: F821
 agentscore  # noqa: F821
@@ -78,3 +93,7 @@ _agentscore_check  # noqa: F821
 return_value  # noqa: F821
 urlpatterns  # noqa: F821
 index  # noqa: F821
+
+# Public API helpers re-exported for merchant code that mirrors EVM/Solana
+# branching (e.g. extractors that call is_valid_address before normalizing).
+is_valid_address  # noqa: F821

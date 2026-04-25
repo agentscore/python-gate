@@ -581,3 +581,104 @@ class TestBuildBodyIdentity:
         body = client._build_body("0xabc")
         assert body["address"] == "0xabc"
         assert "operator_token" not in body
+
+
+ASSESS_URL = "https://api.agentscore.sh/v1/assess"
+
+
+class TestInvalidCredential:
+    """Coverage for the 401 invalid_credential branch — distinct from token_expired
+    in that no auto-session is minted. The client surfaces it as InvalidCredentialError
+    so adapters can render a permanent-failure 403 instead of a transient 503 retry."""
+
+    @respx.mock
+    def test_raises_invalid_credential_on_401_invalid_credential(self):
+        from agentscore_gate.client import InvalidCredentialError
+
+        respx.post(ASSESS_URL).mock(
+            return_value=httpx.Response(
+                401, json={"error": {"code": "invalid_credential", "message": "Operator credential not found"}}
+            )
+        )
+        client = _make_client()
+        with pytest.raises(InvalidCredentialError) as exc_info:
+            client.check(operator_token="opc_typo")
+        assert exc_info.value.code == "invalid_credential"
+
+    @respx.mock
+    def test_raises_runtime_error_on_unknown_401_code(self):
+        # New 401 codes from the API that we don't have a specific handler for fall
+        # through to RuntimeError + a console.warn so ops notice without crashing
+        # the request.
+        respx.post(ASSESS_URL).mock(
+            return_value=httpx.Response(401, json={"error": {"code": "future_code_we_havent_mapped"}})
+        )
+        client = _make_client()
+        with pytest.raises(RuntimeError, match="returned 401"):
+            client.check(operator_token="opc_x")
+
+    @respx.mock
+    def test_logs_when_401_body_isnt_valid_json(self):
+        # Body parse failure used to swallow silently; now we log and fall through
+        # to the generic "API returned 401" RuntimeError.
+        respx.post(ASSESS_URL).mock(return_value=httpx.Response(401, content=b"<html>not json at all</html>"))
+        client = _make_client()
+        with pytest.raises(RuntimeError, match="returned 401"):
+            client.check(operator_token="opc_x")
+
+    def test_build_invalid_credential_reason_carries_action_copy(self):
+        from agentscore_gate.client import build_invalid_credential_reason
+
+        reason = build_invalid_credential_reason()
+        assert reason.code == "invalid_credential"
+        assert reason.agent_instructions is not None
+        instructions = json.loads(reason.agent_instructions)
+        assert instructions["action"] == "switch_token_or_restart_session"
+        # No session fields — the API doesn't mint one for this case.
+        assert reason.session_id is None
+        assert reason.verify_url is None
+        assert reason.poll_secret is None
+
+
+class TestResolveWalletErrorHandling:
+    """The wallet→operator resolve path is used by verify_wallet_signer_match. HTTPError
+    and non-2xx responses must return (False, None, []) so the caller can map to api_error
+    instead of crashing the request."""
+
+    @respx.mock
+    def test_resolve_returns_false_on_http_error(self):
+        respx.post(ASSESS_URL).mock(side_effect=httpx.ConnectError("dns failure"))
+        client = _make_client()
+        ok, op, links = client._resolve_wallet_to_operator("0xfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed")
+        assert ok is False
+        assert op is None
+        assert links == []
+
+    @respx.mock
+    def test_resolve_returns_false_on_non_success(self):
+        respx.post(ASSESS_URL).mock(return_value=httpx.Response(500, json={"error": "boom"}))
+        client = _make_client()
+        ok, op, links = client._resolve_wallet_to_operator("0xfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed")
+        assert ok is False
+        assert op is None
+        assert links == []
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_aresolve_returns_false_on_http_error(self):
+        respx.post(ASSESS_URL).mock(side_effect=httpx.ConnectError("dns failure"))
+        client = _make_client()
+        ok, op, links = await client._aresolve_wallet_to_operator("0xfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed")
+        assert ok is False
+        assert op is None
+        assert links == []
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_aresolve_returns_false_on_non_success(self):
+        respx.post(ASSESS_URL).mock(return_value=httpx.Response(500, json={"error": "boom"}))
+        client = _make_client()
+        ok, op, links = await client._aresolve_wallet_to_operator("0xfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed")
+        assert ok is False
+        assert op is None
+        assert links == []
