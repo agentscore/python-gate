@@ -13,6 +13,7 @@ from agentscore_gate._response import (
     WALLET_AUTH_REQUIRES_WALLET_SIGNING_INSTRUCTIONS,
     WALLET_SIGNER_MISMATCH_INSTRUCTIONS,
 )
+from agentscore_gate.address import normalize_address
 from agentscore_gate.cache import TTLCache
 from agentscore_gate.types import (
     AgentIdentity,
@@ -83,9 +84,11 @@ class GateClient:
         self._sync_client = httpx.Client(timeout=10.0)
 
     def _cache_key(self, address: str | None = None, operator_token: str | None = None) -> str:
+        # operator_token is opaque ASCII — lowercasing is safe. Wallet addresses go through
+        # normalize_address so Solana base58 (case-sensitive) isn't corrupted into a cache miss.
         if operator_token:
             return operator_token.lower()
-        return (address or "").lower()
+        return normalize_address(address) if address else ""
 
     def _build_body(
         self, address: str | None = None, chain: str | None = None, operator_token: str | None = None
@@ -297,7 +300,10 @@ class GateClient:
         agents on ``wallet_signer_mismatch`` denials so they know which wallets they can
         legitimately sign with.
         """
-        wallet = wallet_address.lower()
+        # Network-aware: lowercase EVM, preserve Solana base58 case. The DB stores both
+        # formats verbatim in operator_credential_wallets.wallet_address; lowercasing a
+        # Solana address would never match. The cache key uses the same normalized form.
+        wallet = normalize_address(wallet_address)
         hit, op, links = self._resolve_from_cache(wallet)
         if hit:
             return True, op, links
@@ -305,7 +311,7 @@ class GateClient:
             resp = self._sync_client.post(
                 f"{self._base_url}/v1/assess",
                 headers=self._headers(),
-                content=json.dumps({"address": wallet_address}),
+                content=json.dumps({"address": wallet}),
             )
         except httpx.HTTPError:
             return False, None, []
@@ -319,7 +325,8 @@ class GateClient:
         return True, (op_value if isinstance(op_value, str) else None), linked
 
     async def _aresolve_wallet_to_operator(self, wallet_address: str) -> tuple[bool, str | None, list[str]]:
-        wallet = wallet_address.lower()
+        # Same network-aware normalization as the sync path; see _resolve_wallet_to_operator.
+        wallet = normalize_address(wallet_address)
         hit, op, links = self._resolve_from_cache(wallet)
         if hit:
             return True, op, links
@@ -327,7 +334,7 @@ class GateClient:
             resp = await self._async_client.post(
                 f"{self._base_url}/v1/assess",
                 headers=self._headers(),
-                content=json.dumps({"address": wallet_address}),
+                content=json.dumps({"address": wallet}),
             )
         except httpx.HTTPError:
             return False, None, []
@@ -379,13 +386,16 @@ class GateClient:
                 claimed_wallet=options.claimed_wallet,
                 agent_instructions=WALLET_AUTH_REQUIRES_WALLET_SIGNING_INSTRUCTIONS,
             )
-        claimed = options.claimed_wallet.lower()
-        signer_lower = signer.lower()
-        if claimed == signer_lower:
+        # Network-aware normalization: lowercase EVM, preserve Solana base58. Both the
+        # byte-equal short-circuit AND the resolve-cache key derive from this — lowercasing
+        # Solana would corrupt both and make every Solana signer-match return api_error.
+        claimed = normalize_address(options.claimed_wallet)
+        signer_norm = normalize_address(signer)
+        if claimed == signer_norm:
             self._report_signer_event_sync("pass")
             return VerifyWalletSignerResult(kind="pass")
         claimed_ok, claimed_op, claimed_links = self._resolve_wallet_to_operator(claimed)
-        signer_ok, signer_op, _ = self._resolve_wallet_to_operator(signer_lower)
+        signer_ok, signer_op, _ = self._resolve_wallet_to_operator(signer_norm)
         if not claimed_ok or not signer_ok:
             self._report_signer_event_sync("api_error")
             return VerifyWalletSignerResult(kind="api_error", claimed_wallet=claimed)
@@ -398,7 +408,7 @@ class GateClient:
             claimed_operator=claimed_op,
             actual_signer_operator=signer_op,
             expected_signer=claimed,
-            actual_signer=signer_lower,
+            actual_signer=signer_norm,
             linked_wallets=claimed_links,
             agent_instructions=WALLET_SIGNER_MISMATCH_INSTRUCTIONS,
         )
@@ -413,13 +423,14 @@ class GateClient:
                 claimed_wallet=options.claimed_wallet,
                 agent_instructions=WALLET_AUTH_REQUIRES_WALLET_SIGNING_INSTRUCTIONS,
             )
-        claimed = options.claimed_wallet.lower()
-        signer_lower = signer.lower()
-        if claimed == signer_lower:
+        # Same network-aware normalization as the sync path.
+        claimed = normalize_address(options.claimed_wallet)
+        signer_norm = normalize_address(signer)
+        if claimed == signer_norm:
             await self._report_signer_event_async("pass")
             return VerifyWalletSignerResult(kind="pass")
         claimed_ok, claimed_op, claimed_links = await self._aresolve_wallet_to_operator(claimed)
-        signer_ok, signer_op, _ = await self._aresolve_wallet_to_operator(signer_lower)
+        signer_ok, signer_op, _ = await self._aresolve_wallet_to_operator(signer_norm)
         if not claimed_ok or not signer_ok:
             await self._report_signer_event_async("api_error")
             return VerifyWalletSignerResult(kind="api_error", claimed_wallet=claimed)
@@ -432,7 +443,7 @@ class GateClient:
             claimed_operator=claimed_op,
             actual_signer_operator=signer_op,
             expected_signer=claimed,
-            actual_signer=signer_lower,
+            actual_signer=signer_norm,
             linked_wallets=claimed_links,
             agent_instructions=WALLET_SIGNER_MISMATCH_INSTRUCTIONS,
         )
