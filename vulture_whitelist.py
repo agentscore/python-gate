@@ -93,3 +93,7 @@ _agentscore_check  # noqa: F821
 return_value  # noqa: F821
 urlpatterns  # noqa: F821
 index  # noqa: F821
+
+# Public API helpers re-exported for merchant code that mirrors EVM/Solana
+# branching (e.g. extractors that call is_valid_address before normalizing).
+is_valid_address  # noqa: F821
