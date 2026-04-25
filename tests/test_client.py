@@ -621,9 +621,7 @@ class TestInvalidCredential:
     def test_logs_when_401_body_isnt_valid_json(self):
         # Body parse failure used to swallow silently; now we log and fall through
         # to the generic "API returned 401" RuntimeError.
-        respx.post(ASSESS_URL).mock(
-            return_value=httpx.Response(401, content=b"<html>not json at all</html>")
-        )
+        respx.post(ASSESS_URL).mock(return_value=httpx.Response(401, content=b"<html>not json at all</html>"))
         client = _make_client()
         with pytest.raises(RuntimeError, match="returned 401"):
             client.check(operator_token="opc_x")

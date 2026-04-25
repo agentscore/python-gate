@@ -506,21 +506,23 @@ def build_token_denied_reason(err: TokenDeniedError) -> DenialReason:
 # Distinct from TokenDeniedError: no auto-session is issued because the agent may
 # have other valid tokens to try first. Agents should switch tokens or drop the
 # header to bootstrap a fresh session.
-INVALID_CREDENTIAL_INSTRUCTIONS = json.dumps({
-    "action": "switch_token_or_restart_session",
-    "steps": [
-        "The X-Operator-Token you sent does not match any credential. This is a permanent "
-        "state — retrying with the same token will keep failing.",
-        "If you have other stored opc_... credentials, retry with one of them.",
-        "Otherwise drop X-Operator-Token and retry with no identity header — the merchant "
-        "will mint a fresh verification session in the 403 body (verify_url + poll_secret) "
-        "so the user can re-verify and you can poll for a new operator_token.",
-    ],
-    "user_message": (
-        "The operator_token is not recognized. Use a different stored token, or restart the "
-        "verification session flow to mint a new one."
-    ),
-})
+INVALID_CREDENTIAL_INSTRUCTIONS = json.dumps(
+    {
+        "action": "switch_token_or_restart_session",
+        "steps": [
+            "The X-Operator-Token you sent does not match any credential. This is a permanent "
+            "state — retrying with the same token will keep failing.",
+            "If you have other stored opc_... credentials, retry with one of them.",
+            "Otherwise drop X-Operator-Token and retry with no identity header — the merchant "
+            "will mint a fresh verification session in the 403 body (verify_url + poll_secret) "
+            "so the user can re-verify and you can poll for a new operator_token.",
+        ],
+        "user_message": (
+            "The operator_token is not recognized. Use a different stored token, or restart the "
+            "verification session flow to mint a new one."
+        ),
+    }
+)
 
 
 class InvalidCredentialError(Exception):

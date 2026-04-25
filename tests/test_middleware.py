@@ -363,7 +363,8 @@ def test_middleware_emits_invalid_credential_no_session():
     # Agent_instructions guides the agent to switch tokens or restart the session flow.
     instructions = json.loads(body["agent_instructions"])
     assert instructions["action"] == "switch_token_or_restart_session"
-    assert "switch tokens" in instructions["user_message"].lower() or "different stored token" in instructions["user_message"].lower()
+    msg = instructions["user_message"].lower()
+    assert "switch tokens" in msg or "different stored token" in msg
     # No session fields — the API didn't mint one for this case.
     assert "session_id" not in body
     assert "verify_url" not in body

@@ -54,8 +54,10 @@ class TestIsValidAddress:
 
 class TestNormalizeAddress:
     def test_lowercases_evm(self):
-        assert normalize_address("0x690BF056DA820EF2e74f8943B3Fe5ca4ADEe7a3e") == \
-            "0x690bf056da820ef2e74f8943b3fe5ca4adee7a3e"
+        assert (
+            normalize_address("0x690BF056DA820EF2e74f8943B3Fe5ca4ADEe7a3e")
+            == "0x690bf056da820ef2e74f8943b3fe5ca4adee7a3e"
+        )
 
     def test_preserves_solana_case(self):
         sol = "G2ajX7CrLGoaL8ncaDYNCQoV9b7XhwGF1RzAyKDEZgNZ"
