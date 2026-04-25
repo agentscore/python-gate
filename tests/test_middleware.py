@@ -341,6 +341,36 @@ def test_middleware_passes_through_token_expired_with_auto_session():
 
 
 @respx.mock
+def test_middleware_emits_invalid_credential_no_session():
+    # `invalid_credential` is permanent — the API returns 401 with NO auto-session
+    # (distinct from token_expired). Middleware must classify it as a 403 with
+    # action='switch_token_or_restart_session', NOT fall through to api_error 503
+    # which would tell the agent to retry forever on a permanent state.
+    respx.post(ASSESS_URL).mock(
+        return_value=httpx.Response(
+            401,
+            json={"error": {"code": "invalid_credential", "message": "Operator credential not found"}},
+        )
+    )
+
+    app = _make_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/", headers={"x-operator-token": "opc_typo_does_not_exist"})
+
+    assert resp.status_code == 403
+    body = resp.json()
+    assert body["error"] == "invalid_credential"
+    # Agent_instructions guides the agent to switch tokens or restart the session flow.
+    instructions = json.loads(body["agent_instructions"])
+    assert instructions["action"] == "switch_token_or_restart_session"
+    assert "switch tokens" in instructions["user_message"].lower() or "different stored token" in instructions["user_message"].lower()
+    # No session fields — the API didn't mint one for this case.
+    assert "session_id" not in body
+    assert "verify_url" not in body
+    assert "poll_secret" not in body
+
+
+@respx.mock
 def test_middleware_passes_through_token_expired_without_next_steps():
     respx.post(ASSESS_URL).mock(
         return_value=httpx.Response(

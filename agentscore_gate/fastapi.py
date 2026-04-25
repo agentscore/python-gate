@@ -13,7 +13,14 @@ from typing import TYPE_CHECKING, Any, NoReturn
 from starlette.requests import Request  # noqa: TC002 - runtime import required for FastAPI DI
 
 from agentscore_gate._response import build_missing_identity_reason, denial_reason_to_body
-from agentscore_gate.client import GateClient, PaymentRequiredError, TokenDeniedError, build_token_denied_reason
+from agentscore_gate.client import (
+    GateClient,
+    InvalidCredentialError,
+    PaymentRequiredError,
+    TokenDeniedError,
+    build_invalid_credential_reason,
+    build_token_denied_reason,
+)
 from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason
 from agentscore_gate.types import (
     AgentIdentity,
@@ -164,6 +171,9 @@ class AgentScoreGate:
             self._deny(request, DenialReason(code="payment_required"))
         except TokenDeniedError as err:
             self._deny(request, build_token_denied_reason(err))
+        except InvalidCredentialError:
+            # Permanent — no auto-session, agent should switch tokens or restart.
+            self._deny(request, build_invalid_credential_reason())
         except Exception:
             if self._client.fail_open:
                 return

@@ -118,17 +118,31 @@ class GateClient:
             raise PaymentRequiredError
 
         if resp.status_code == 401:
-            # Pass through the API's token_expired 401 (covers both expired and revoked
-            # credentials — API deliberately doesn't distinguish). The 401 body carries
-            # an auto-minted session so agents recover without an API key.
+            # Pass through the API's credential-state 401s. Two distinct cases:
+            #   - token_expired: revoked or TTL-expired (the API unifies them). Body
+            #     carries an auto-minted session so the agent recovers without an
+            #     API key.
+            #   - invalid_credential: the token doesn't exist at all (typo, never
+            #     minted). No auto-session — the agent likely has another token to
+            #     try first, or should drop the header to bootstrap.
             try:
                 err_body = resp.json()
-            except (ValueError, json.JSONDecodeError):
+            except (ValueError, json.JSONDecodeError) as parse_err:
+                # Don't silently swallow — schema drift on /v1/assess used to mask
+                # itself this way for hours. Log and keep falling through.
+                _log.warning("[gate] /v1/assess 401 body parse failed: %s", parse_err)
                 err_body = {}
             error = err_body.get("error") if isinstance(err_body, dict) else None
             code = error.get("code") if isinstance(error, dict) else None
             if code == "token_expired":
                 raise TokenDeniedError(err_body if isinstance(err_body, dict) else {})
+            if code == "invalid_credential":
+                raise InvalidCredentialError()
+            if code:
+                _log.warning(
+                    "[gate] /v1/assess returned 401 %s — no specific handler, surfacing as RuntimeError.",
+                    code,
+                )
             msg = f"AgentScore API returned {resp.status_code}"
             raise RuntimeError(msg)
 
@@ -485,4 +499,53 @@ def build_token_denied_reason(err: TokenDeniedError) -> DenialReason:
         poll_secret=body.get("poll_secret") if isinstance(body.get("poll_secret"), str) else None,
         poll_url=body.get("poll_url") if isinstance(body.get("poll_url"), str) else None,
         agent_instructions=json.dumps(err.next_steps) if err.next_steps else None,
+    )
+
+
+# Permanent — the operator_token doesn't exist (typo, never minted, fabricated).
+# Distinct from TokenDeniedError: no auto-session is issued because the agent may
+# have other valid tokens to try first. Agents should switch tokens or drop the
+# header to bootstrap a fresh session.
+INVALID_CREDENTIAL_INSTRUCTIONS = json.dumps({
+    "action": "switch_token_or_restart_session",
+    "steps": [
+        "The X-Operator-Token you sent does not match any credential. This is a permanent "
+        "state — retrying with the same token will keep failing.",
+        "If you have other stored opc_... credentials, retry with one of them.",
+        "Otherwise drop X-Operator-Token and retry with no identity header — the merchant "
+        "will mint a fresh verification session in the 403 body (verify_url + poll_secret) "
+        "so the user can re-verify and you can poll for a new operator_token.",
+    ],
+    "user_message": (
+        "The operator_token is not recognized. Use a different stored token, or restart the "
+        "verification session flow to mint a new one."
+    ),
+})
+
+
+class InvalidCredentialError(Exception):
+    """Raised when /v1/assess returns 401 invalid_credential.
+
+    The token doesn't exist at all (typo, never minted, fabricated). No auto-session
+    is issued — agents should switch to a different stored token or drop the header
+    to bootstrap a fresh session via the merchant's createSessionOnMissing path.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("invalid_credential")
+        self.code: Literal["invalid_credential"] = "invalid_credential"
+
+
+def build_invalid_credential_reason() -> DenialReason:
+    """Project an InvalidCredentialError into a DenialReason.
+
+    No session fields — the API didn't mint one. Adapters render this as a 403 with
+    agent_instructions that point the agent at recovery (try a different token or
+    restart the session flow).
+    """
+    from agentscore_gate.types import DenialReason
+
+    return DenialReason(
+        code="invalid_credential",
+        agent_instructions=INVALID_CREDENTIAL_INSTRUCTIONS,
     )

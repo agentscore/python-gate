@@ -7,7 +7,14 @@ from typing import Any
 from django.http import HttpRequest, JsonResponse
 
 from agentscore_gate._response import build_missing_identity_reason, denial_reason_to_body
-from agentscore_gate.client import GateClient, PaymentRequiredError, TokenDeniedError, build_token_denied_reason
+from agentscore_gate.client import (
+    GateClient,
+    InvalidCredentialError,
+    PaymentRequiredError,
+    TokenDeniedError,
+    build_invalid_credential_reason,
+    build_token_denied_reason,
+)
 from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason_sync
 from agentscore_gate.types import (
     AgentIdentity,
@@ -136,6 +143,9 @@ class AgentScoreMiddleware:
         except TokenDeniedError as err:
             reason = build_token_denied_reason(err)
             return self._on_denied(request, reason)
+        except InvalidCredentialError:
+            # Permanent — no auto-session, agent should switch tokens or restart.
+            return self._on_denied(request, build_invalid_credential_reason())
         except Exception:
             if self._client.fail_open:
                 return self.get_response(request)

@@ -26,6 +26,11 @@ DenialCode = Literal[
     # code deliberately; the API doesn't disclose which). The 401 body carries an
     # auto-minted session so the agent recovers without an API key.
     "token_expired",
+    # The operator_token doesn't exist at all (typo, never minted, fabricated). Distinct
+    # from token_expired — no auto-session is issued because the agent may have a
+    # different valid token to try first. Agents should switch tokens or drop the header
+    # to bootstrap a fresh session.
+    "invalid_credential",
 ]
 
 

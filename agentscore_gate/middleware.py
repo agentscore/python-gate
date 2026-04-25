@@ -8,7 +8,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from agentscore_gate._response import build_missing_identity_reason, denial_reason_to_body
-from agentscore_gate.client import GateClient, PaymentRequiredError, TokenDeniedError, build_token_denied_reason
+from agentscore_gate.client import (
+    GateClient,
+    InvalidCredentialError,
+    PaymentRequiredError,
+    TokenDeniedError,
+    build_invalid_credential_reason,
+    build_token_denied_reason,
+)
 from agentscore_gate.sessions import CreateSessionOnMissing, try_create_session_denial_reason
 from agentscore_gate.types import (
     AgentIdentity,
@@ -165,6 +172,11 @@ class AgentScoreGate:
             await response(scope, receive, send)
         except TokenDeniedError as err:
             reason = build_token_denied_reason(err)
+            response = await self._on_denied(request, reason)
+            await response(scope, receive, send)
+        except InvalidCredentialError:
+            # Permanent — no auto-session, agent should switch tokens or restart.
+            reason = build_invalid_credential_reason()
             response = await self._on_denied(request, reason)
             await response(scope, receive, send)
         except Exception:
